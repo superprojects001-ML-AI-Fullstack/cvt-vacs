@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────
+# nigeria_plates.yaml
+# YOLOv8 Dataset Configuration for Nigerian License Plates
+#
+# Place this file in your project root (next to main.py)
+# ─────────────────────────────────────────────────────────────
+
+# Root path of the dataset  (relative to where you run train_model.py)
+path: ./nigeria_plates
+
+# Sub-folders for each split
+train: images/train
+val:   images/val
+test:  images/test
+
+# Number of classes
+nc: 1
+
+# Class names — must match what you used when labelling
+names:
+  0: license_plate
