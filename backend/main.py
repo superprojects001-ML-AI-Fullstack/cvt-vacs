@@ -85,7 +85,9 @@ This API implements a **Two-Factor Authentication (2FA)** system combining:
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # restrict to your domain in production
+    allow_origins=[
+        "https://cvt-vacs.netlify.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

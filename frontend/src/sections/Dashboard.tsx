@@ -40,7 +40,7 @@ interface DashboardProps {
   onNavigate: (page: 'dashboard' | 'vehicles' | 'tokens' | 'anpr' | 'logs' | 'stats') => void;
 }
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
   const [stats, setStats] = useState<DashboardStats | null>(null);

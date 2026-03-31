@@ -25,7 +25,7 @@ interface AccessLog {
   total_response_time_ms?: number;
 }
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 export default function AccessLogs() {
   const [logs, setLogs] = useState<AccessLog[]>([]);

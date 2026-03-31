@@ -23,7 +23,7 @@ interface Vehicle {
   registered_at: string;
 }
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 const vehicleTypes = [
   { value: 'sedan', label: 'Sedan' },

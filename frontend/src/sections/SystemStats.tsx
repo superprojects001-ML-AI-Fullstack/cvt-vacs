@@ -30,7 +30,7 @@ interface SystemStatistics {
   today_denied: number;
 }
 
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 export default function SystemStats() {
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
