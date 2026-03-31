@@ -1,3 +1,4 @@
+cat > .gitignore << 'EOF'
 # Dependencies
 node_modules/
 npm-debug.log*
@@ -27,3 +28,5 @@ Thumbs.db
 # Editor directories
 .vscode/
 .idea/
+
+EOF
