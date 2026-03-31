@@ -17,6 +17,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
+// Configuration Constants
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const REFRESH_INTERVAL_MS = 30000; // 30 seconds
+const RECENT_LOGS_LIMIT = 5;
+const SYSTEM_VERSION = '1.0.0'; // Can be moved to environment variable later
+
 interface DashboardStats {
   total_users: number;
   total_vehicles: number;
@@ -40,64 +46,87 @@ interface DashboardProps {
   onNavigate: (page: 'dashboard' | 'vehicles' | 'tokens' | 'anpr' | 'logs' | 'stats') => void;
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_URL;
-
 export default function Dashboard({ onNavigate }: DashboardProps) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentAccess, setRecentAccess] = useState<RecentAccess[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchDashboardData();
-    const interval = setInterval(fetchDashboardData, 30000);
+    const interval = setInterval(fetchDashboardData, REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
   }, []);
 
   const fetchDashboardData = async () => {
+    if (!API_BASE_URL) {
+      toast.error('API configuration is missing');
+      setLoading(false);
+      return;
+    }
+
     try {
-      const statsRes = await fetch(`${API_BASE_URL}/logs/statistics`);
+      const [statsRes, logsRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/logs/statistics`),
+        fetch(`${API_BASE_URL}/logs/access?limit=${RECENT_LOGS_LIMIT}`)
+      ]);
+
       if (statsRes.ok) {
         const statsData = await statsRes.json();
-        setStats(statsData.statistics);
+        setStats(statsData.statistics || null);
       }
 
-      const logsRes = await fetch(`${API_BASE_URL}/logs/access?limit=5`);
       if (logsRes.ok) {
         const logsData = await logsRes.json();
         setRecentAccess(logsData.logs || []);
       }
     } catch (error) {
       console.error('Failed to fetch dashboard data:', error);
-      toast.error('Failed to fetch dashboard data');
+      toast.error('Failed to load dashboard data');
+    } finally {
+      setLoading(false);
     }
   };
+
+  // Safe fallback values
+  const safeStats = stats || {
+    total_users: 0,
+    total_vehicles: 0,
+    total_tokens_issued: 0,
+    total_access_logs: 0,
+    today_attempts: 0,
+    today_granted: 0,
+    today_denied: 0
+  };
+
+  const successRate = safeStats.today_attempts 
+    ? Math.round((safeStats.today_granted / safeStats.today_attempts) * 100) 
+    : 0;
 
   const statCards = [
     {
       title: 'Total Vehicles',
-      value: stats?.total_vehicles || 0,
+      value: safeStats.total_vehicles,
       icon: Car,
       color: 'bg-blue-500',
       description: 'Registered vehicles'
     },
     {
       title: 'Active Tokens',
-      value: stats?.total_tokens_issued || 0,
+      value: safeStats.total_tokens_issued,
       icon: Key,
       color: 'bg-green-500',
       description: 'Issued tokens'
     },
     {
-      title: 'Today\'s Access',
-      value: stats?.today_attempts || 0,
+      title: "Today's Access",
+      value: safeStats.today_attempts,
       icon: ClipboardList,
       color: 'bg-purple-500',
-      description: `${stats?.today_granted || 0} granted, ${stats?.today_denied || 0} denied`
+      description: `${safeStats.today_granted} granted, ${safeStats.today_denied} denied`
     },
     {
       title: 'Success Rate',
-      value: stats?.today_attempts 
-        ? Math.round((stats.today_granted / stats.today_attempts) * 100) 
-        : 0,
+      value: successRate,
       icon: Activity,
       color: 'bg-orange-500',
       description: 'Access granted %',
@@ -140,15 +169,21 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     return new Date(timestamp).toLocaleString();
   };
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/* Welcome Banner */}
       <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-xl p-8 text-white">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-3xl font-bold mb-2">
-              Welcome to CVT-VACS
-            </h1>
+            <h1 className="text-3xl font-bold mb-2">Welcome to CVT-VACS</h1>
             <p className="text-slate-300 max-w-2xl">
               Computer Vision and Token-Based Authentication System for Vehicle Access Control. 
               This system implements Two-Factor Authentication (2FA) combining ANPR and token verification.
@@ -291,7 +326,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             <div>
               <h3 className="font-semibold text-slate-900">System Information</h3>
               <p className="text-sm text-slate-600 mt-1">
-                CVT-VACS v1.0.0 | Two-Factor Authentication System
+                CVT-VACS v{SYSTEM_VERSION} | Two-Factor Authentication System
               </p>
             </div>
             <div className="text-right text-sm text-slate-500">

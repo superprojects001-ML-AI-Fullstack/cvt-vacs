@@ -1,8 +1,8 @@
 /**
- * Token Management Page
+ * Vehicle Registration Page
  */
-import { useState } from 'react';
-import { Key, Plus, Copy, CheckCircle, Clock, XCircle, QrCode, Loader2, Shield } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Car, Plus, Search, CheckCircle, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,93 +11,160 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL;
+// Constants (These are acceptable as they are configuration, not business logic)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const DEFAULT_VEHICLE_TYPE = 'sedan';
+const DEFAULT_LIMIT = 100;
 
-const tokenTypes = [
-  { value: 'jwt', label: 'JWT Token' },
-  { value: 'qr', label: 'QR Code' },
-  { value: 'otp', label: 'One-Time Password (OTP)' }
+const vehicleTypes = [
+  { value: 'sedan', label: 'Sedan' },
+  { value: 'suv', label: 'SUV' },
+  { value: 'truck', label: 'Truck' },
+  { value: 'van', label: 'Van' },
+  { value: 'motorcycle', label: 'Motorcycle' },
+  { value: 'other', label: 'Other' }
 ];
 
-export default function TokenManagement() {
+interface Vehicle {
+  id: string;
+  plate_number: string;
+  vehicle_type: string;
+  make?: string;
+  model?: string;
+  color?: string;
+  user_id: string;
+  status: string;
+  registered_at: string;
+}
+
+export default function VehicleRegistration() {
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [isVerifyDialogOpen, setIsVerifyDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [generatedToken, setGeneratedToken] = useState<any>(null);
-  const [copied, setCopied] = useState(false);
-  
-  const [issueForm, setIssueForm] = useState({
-    user_id: 'user_001',
+
+  // Form state - NO hardcoded values
+  const [formData, setFormData] = useState({
     plate_number: '',
-    token_type: 'jwt',
-    expiry_hours: '24'
+    vehicle_type: DEFAULT_VEHICLE_TYPE,
+    make: '',
+    model: '',
+    color: '',
+    user_id: ''                    // Completely empty - will be filled by user or auth
   });
 
-  const [verifyForm, setVerifyForm] = useState({
-    token: '',
-    plate_number: ''
-  });
-  const [verifyResult, setVerifyResult] = useState<any>(null);
+  useEffect(() => {
+    fetchVehicles();
+  }, []);
 
-  const handleIssueToken = async (e: React.FormEvent) => {
+  const fetchVehicles = async () => {
+    if (!API_BASE_URL) {
+      toast.error('API URL is not configured');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/vehicles/all?limit=${DEFAULT_LIMIT}`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        setVehicles(data.vehicles || []);
+      } else {
+        toast.error('Failed to fetch vehicles');
+      }
+    } catch (error) {
+      console.error('Failed to fetch vehicles:', error);
+      toast.error('Network error while loading vehicles');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Validation
+    if (!formData.plate_number.trim()) {
+      toast.error('License plate number is required');
+      return;
+    }
+    if (!formData.user_id.trim()) {
+      toast.error('Owner User ID is required');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/tokens/issue?user_id=${issueForm.user_id}&plate_number=${issueForm.plate_number}&token_type=${issueForm.token_type}&expiry_hours=${issueForm.expiry_hours}`,
-        { method: 'POST' }
-      );
+      const response = await fetch(`${API_BASE_URL}/vehicles/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
 
       if (response.ok) {
-        const data = await response.json();
-        setGeneratedToken(data.token);
-        toast.success('Token issued successfully!');
+        toast.success('Vehicle registered successfully!');
+        setIsDialogOpen(false);
+        resetForm();
+        fetchVehicles();           // Refresh list
       } else {
-        const error = await response.json();
-        toast.error(error.detail || 'Failed to issue token');
+        const errorData = await response.json().catch(() => ({}));
+        toast.error(errorData.detail || 'Failed to register vehicle');
       }
     } catch (error) {
+      console.error('Registration error:', error);
       toast.error('Network error - please try again');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleVerifyToken = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-
-    try {
-      const response = await fetch(
-        `${API_BASE_URL}/tokens/verify-with-plate?token=${encodeURIComponent(verifyForm.token)}&detected_plate=${verifyForm.plate_number}`,
-        { method: 'POST' }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        setVerifyResult(data);
-        toast.success(data.access_granted ? 'Access granted!' : 'Access denied');
-      } else {
-        const error = await response.json();
-        toast.error(error.detail || 'Verification failed');
-      }
-    } catch (error) {
-      toast.error('Network error - please try again');
-    } finally {
-      setIsSubmitting(false);
-    }
+  const resetForm = () => {
+    setFormData({
+      plate_number: '',
+      vehicle_type: DEFAULT_VEHICLE_TYPE,
+      make: '',
+      model: '',
+      color: '',
+      user_id: ''
+    });
   };
 
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    toast.success('Token copied to clipboard');
-    setTimeout(() => setCopied(false), 2000);
+  const filteredVehicles = vehicles.filter((v) =>
+    v.plate_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    v.make?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    v.model?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const getStatusBadge = (status: string) => {
+    const statusMap: Record<string, { className: string; label: string }> = {
+      active: { className: 'bg-green-100 text-green-800', label: 'Active' },
+      inactive: { className: 'bg-gray-100 text-gray-800', label: 'Inactive' },
+      banned: { className: 'bg-red-100 text-red-800', label: 'Banned' },
+      suspended: { className: 'bg-yellow-100 text-yellow-800', label: 'Suspended' }
+    };
+
+    const config = statusMap[status.toLowerCase()] || {
+      className: 'bg-gray-100 text-gray-800',
+      label: status.charAt(0).toUpperCase() + status.slice(1)
+    };
+
+    return (
+      <span className={`px-2 py-1 text-xs font-medium rounded-full ${config.className}`}>
+        {config.label}
+      </span>
+    );
   };
 
-  const formatExpiry = (expiryTime: string) => {
-    return new Date(expiryTime).toLocaleString();
+  const openRegisterDialog = () => {
+    // TODO: When you implement authentication, automatically set user_id here
+    // Example:
+    // setFormData(prev => ({ ...prev, user_id: currentUser?.id || '' }));
+
+    resetForm();           // Ensure clean form when opening
+    setIsDialogOpen(true);
   };
 
   return (
@@ -105,345 +172,198 @@ export default function TokenManagement() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-gray-800">Token Management</h2>
-          <p className="text-gray-500">Issue and verify access tokens for vehicles</p>
+          <h2 className="text-2xl font-bold text-gray-800">Vehicle Registration</h2>
+          <p className="text-gray-500">Manage registered vehicles in the system</p>
         </div>
-        <div className="flex gap-3">
-          <Button variant="outline" onClick={() => setIsVerifyDialogOpen(true)}>
-            <Shield className="w-4 h-4 mr-2" />
-            Verify Token
-          </Button>
-          <Button onClick={() => {
-            setGeneratedToken(null);
-            setIsDialogOpen(true);
-          }}>
-            <Plus className="w-4 h-4 mr-2" />
-            Issue Token
-          </Button>
-        </div>
+        <Button onClick={openRegisterDialog} className="gap-2">
+          <Plus className="w-4 h-4" />
+          Register Vehicle
+        </Button>
       </div>
 
-      {/* Info Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                <Key className="w-6 h-6 text-blue-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">JWT Tokens</p>
-                <p className="text-lg font-semibold">Secure & Signed</p>
-                <p className="text-xs text-gray-400">Cryptographically secure</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
-                <QrCode className="w-6 h-6 text-green-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">QR Codes</p>
-                <p className="text-lg font-semibold">Scan to Verify</p>
-                <p className="text-xs text-gray-400">Mobile-friendly</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
-                <Clock className="w-6 h-6 text-purple-600" />
-              </div>
-              <div>
-                <p className="text-sm text-gray-500">Time-Based</p>
-                <p className="text-lg font-semibold">Auto-Expiry</p>
-                <p className="text-xs text-gray-400">Configurable duration</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* How It Works */}
+      {/* Search */}
       <Card>
-        <CardHeader>
-          <CardTitle>How Token-Based Authentication Works</CardTitle>
-          <CardDescription>Understanding the token verification process</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            {[
-              { step: 1, title: 'Token Issued', desc: 'User receives unique token' },
-              { step: 2, title: 'Vehicle Arrives', desc: 'ANPR captures plate' },
-              { step: 3, title: 'Token Presented', desc: 'Driver provides token' },
-              { step: 4, title: '2FA Verification', desc: 'Both factors verified' }
-            ].map((item) => (
-              <div key={item.step} className="flex flex-col items-center text-center p-4 bg-gray-50 rounded-lg">
-                <div className="w-8 h-8 bg-blue-500 text-white rounded-full flex items-center justify-center font-bold mb-2">
-                  {item.step}
-                </div>
-                <p className="font-medium text-gray-900">{item.title}</p>
-                <p className="text-sm text-gray-500">{item.desc}</p>
-              </div>
-            ))}
+        <CardContent className="p-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Input
+              placeholder="Search by plate number, make, or model..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
           </div>
         </CardContent>
       </Card>
 
-      {/* Issue Token Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Issue Access Token</DialogTitle>
-            <DialogDescription>
-              Generate a new authentication token for vehicle access
-            </DialogDescription>
-          </DialogHeader>
+      {/* Vehicles List */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Registered Vehicles</CardTitle>
+          <CardDescription>
+            {filteredVehicles.length} vehicle{filteredVehicles.length !== 1 ? 's' : ''} found
+          </CardDescription>
+        </CardHeader>
 
-          {!generatedToken ? (
-            <form onSubmit={handleIssueToken} className="space-y-4 mt-4">
-              <div className="space-y-2">
-                <Label htmlFor="plate_number">Vehicle Plate Number *</Label>
-                <Input
-                  id="plate_number"
-                  placeholder="e.g., ABC-123-XY"
-                  value={issueForm.plate_number}
-                  onChange={(e) => setIssueForm({ ...issueForm, plate_number: e.target.value })}
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="user_id">Owner User ID *</Label>
-                <Input
-                  id="user_id"
-                  value={issueForm.user_id}
-                  onChange={(e) => setIssueForm({ ...issueForm, user_id: e.target.value })}
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="token_type">Token Type</Label>
-                  <Select
-                    value={issueForm.token_type}
-                    onValueChange={(value) => setIssueForm({ ...issueForm, token_type: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {tokenTypes.map((type) => (
-                        <SelectItem key={type.value} value={type.value}>
-                          {type.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="expiry_hours">Expiry (Hours)</Label>
-                  <Select
-                    value={issueForm.expiry_hours}
-                    onValueChange={(value) => setIssueForm({ ...issueForm, expiry_hours: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">1 hour</SelectItem>
-                      <SelectItem value="6">6 hours</SelectItem>
-                      <SelectItem value="12">12 hours</SelectItem>
-                      <SelectItem value="24">24 hours</SelectItem>
-                      <SelectItem value="48">48 hours</SelectItem>
-                      <SelectItem value="168">1 week</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-4">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setIsDialogOpen(false)}
-                  className="flex-1"
-                >
-                  Cancel
-                </Button>
-                <Button 
-                  type="submit" 
-                  className="flex-1"
-                  disabled={isSubmitting}
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Issuing...
-                    </>
-                  ) : (
-                    <>
-                      <Key className="w-4 h-4 mr-2" />
-                      Issue Token
-                    </>
-                  )}
-                </Button>
-              </div>
-            </form>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+            </div>
+          ) : filteredVehicles.length === 0 ? (
+            <div className="text-center py-12 text-gray-500">
+              <Car className="w-16 h-16 mx-auto mb-4 opacity-50" />
+              <p className="text-lg font-medium">No vehicles found</p>
+              <p className="text-sm">Register a vehicle to get started</p>
+            </div>
           ) : (
-            <div className="space-y-4 mt-4">
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <CheckCircle className="w-5 h-5 text-green-600" />
-                  <span className="font-medium text-green-800">Token Generated Successfully</span>
-                </div>
-                <p className="text-sm text-green-700">
-                  Share this token with the vehicle owner. It will expire at:
-                </p>
-                <p className="text-sm font-medium text-green-800 mt-1">
-                  {formatExpiry(generatedToken.expiry_time)}
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Token</Label>
-                <div className="flex gap-2">
-                  <Input 
-                    value={generatedToken.token_string} 
-                    readOnly 
-                    className="font-mono text-sm"
-                  />
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => copyToClipboard(generatedToken.token_string)}
-                  >
-                    {copied ? <CheckCircle className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Token ID</Label>
-                <Input value={generatedToken.token_id} readOnly className="font-mono text-sm" />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Plate Number</Label>
-                <Input value={generatedToken.plate_number} readOnly />
-              </div>
-
-              <Button 
-                onClick={() => {
-                  setGeneratedToken(null);
-                  setIssueForm({
-                    user_id: 'user_001',
-                    plate_number: '',
-                    token_type: 'jwt',
-                    expiry_hours: '24'
-                  });
-                }}
-                variant="outline"
-                className="w-full"
-              >
-                Issue Another Token
-              </Button>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="text-left py-3 px-4 font-medium text-gray-700">Plate Number</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-700">Type</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-700">Make/Model</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-700">Color</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-700">Status</th>
+                    <th className="text-left py-3 px-4 font-medium text-gray-700">Registered</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredVehicles.map((vehicle) => (
+                    <tr key={vehicle.id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <Car className="w-4 h-4 text-gray-400" />
+                          <span className="font-medium">{vehicle.plate_number}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 capitalize">{vehicle.vehicle_type}</td>
+                      <td className="py-3 px-4">
+                        {vehicle.make && vehicle.model
+                          ? `${vehicle.make} ${vehicle.model}`
+                          : (vehicle.make || vehicle.model || '-')}
+                      </td>
+                      <td className="py-3 px-4 capitalize">{vehicle.color || '-'}</td>
+                      <td className="py-3 px-4">{getStatusBadge(vehicle.status)}</td>
+                      <td className="py-3 px-4 text-sm text-gray-500">
+                        {new Date(vehicle.registered_at).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
+        </CardContent>
+      </Card>
 
-      {/* Verify Token Dialog */}
-      <Dialog open={isVerifyDialogOpen} onOpenChange={setIsVerifyDialogOpen}>
-        <DialogContent className="max-w-lg">
+      {/* Registration Dialog */}
+      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Verify Token</DialogTitle>
+            <DialogTitle>Register New Vehicle</DialogTitle>
             <DialogDescription>
-              Verify a token against a license plate for 2FA
+              Enter vehicle details to register in the access control system
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleVerifyToken} className="space-y-4 mt-4">
+          <form onSubmit={handleSubmit} className="space-y-4 mt-4">
             <div className="space-y-2">
-              <Label htmlFor="verify_token">Token *</Label>
+              <Label htmlFor="plate_number">License Plate Number *</Label>
               <Input
-                id="verify_token"
-                placeholder="Paste token here..."
-                value={verifyForm.token}
-                onChange={(e) => setVerifyForm({ ...verifyForm, token: e.target.value })}
-                required
-                className="font-mono text-sm"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="verify_plate">License Plate Number *</Label>
-              <Input
-                id="verify_plate"
+                id="plate_number"
                 placeholder="e.g., ABC-123-XY"
-                value={verifyForm.plate_number}
-                onChange={(e) => setVerifyForm({ ...verifyForm, plate_number: e.target.value })}
+                value={formData.plate_number}
+                onChange={(e) => setFormData({ ...formData, plate_number: e.target.value })}
                 required
               />
             </div>
 
-            {verifyResult && (
-              <div className={`p-4 rounded-lg ${verifyResult.access_granted ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
-                <div className="flex items-center gap-2 mb-2">
-                  {verifyResult.access_granted ? (
-                    <CheckCircle className="w-5 h-5 text-green-600" />
-                  ) : (
-                    <XCircle className="w-5 h-5 text-red-600" />
-                  )}
-                  <span className={`font-medium ${verifyResult.access_granted ? 'text-green-800' : 'text-red-800'}`}>
-                    {verifyResult.access_granted ? 'Access Granted' : 'Access Denied'}
-                  </span>
-                </div>
-                <div className="space-y-1 text-sm">
-                  <p>Token Valid: <span className={verifyResult.token_valid ? 'text-green-600' : 'text-red-600'}>{verifyResult.token_valid ? 'Yes' : 'No'}</span></p>
-                  <p>Plate Match: <span className={verifyResult.plate_match ? 'text-green-600' : 'text-red-600'}>{verifyResult.plate_match ? 'Yes' : 'No'}</span></p>
-                  <p>Registered Plate: {verifyResult.registered_plate || 'N/A'}</p>
-                  <p>Detected Plate: {verifyResult.detected_plate || 'N/A'}</p>
-                </div>
+            <div className="space-y-2">
+              <Label htmlFor="vehicle_type">Vehicle Type</Label>
+              <Select
+                value={formData.vehicle_type}
+                onValueChange={(value) => setFormData({ ...formData, vehicle_type: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {vehicleTypes.map((type) => (
+                    <SelectItem key={type.value} value={type.value}>
+                      {type.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="make">Make</Label>
+                <Input
+                  id="make"
+                  placeholder="e.g., Toyota"
+                  value={formData.make}
+                  onChange={(e) => setFormData({ ...formData, make: e.target.value })}
+                />
               </div>
-            )}
+              <div className="space-y-2">
+                <Label htmlFor="model">Model</Label>
+                <Input
+                  id="model"
+                  placeholder="e.g., Camry"
+                  value={formData.model}
+                  onChange={(e) => setFormData({ ...formData, model: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="color">Color</Label>
+              <Input
+                id="color"
+                placeholder="e.g., Black"
+                value={formData.color}
+                onChange={(e) => setFormData({ ...formData, color: e.target.value })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="user_id">Owner User ID *</Label>
+              <Input
+                id="user_id"
+                placeholder="Enter user ID"
+                value={formData.user_id}
+                onChange={(e) => setFormData({ ...formData, user_id: e.target.value })}
+                required
+              />
+            </div>
 
             <div className="flex gap-3 pt-4">
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => {
-                  setIsVerifyDialogOpen(false);
-                  setVerifyResult(null);
-                  setVerifyForm({ token: '', plate_number: '' });
-                }}
+                onClick={() => setIsDialogOpen(false)}
                 className="flex-1"
               >
-                Close
+                Cancel
               </Button>
-              <Button 
-                type="submit" 
+              <Button
+                type="submit"
                 className="flex-1"
                 disabled={isSubmitting}
               >
                 {isSubmitting ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Verifying...
+                    Registering...
                   </>
                 ) : (
                   <>
-                    <Shield className="w-4 h-4 mr-2" />
-                    Verify
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                    Register Vehicle
                   </>
                 )}
               </Button>

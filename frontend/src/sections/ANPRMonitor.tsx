@@ -7,7 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL;
+// Configuration Constants
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const INPUT_IMAGE_SIZE = 640;           // Standard input size for YOLO
+const MAX_FILE_SIZE_MB = 10;
+const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp';
 
 interface ANPRResult {
   success: boolean;
@@ -30,29 +34,31 @@ export default function ANPRMonitor() {
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Drag & Drop Handlers
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.type === 'dragenter' || e.type === 'dragover') {
-      setDragActive(true);
-    } else if (e.type === 'dragleave') {
-      setDragActive(false);
-    }
+    setDragActive(e.type === 'dragenter' || e.type === 'dragover');
   }, []);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+
+    if (e.dataTransfer.files?.[0]) {
       handleFile(e.dataTransfer.files[0]);
     }
   }, []);
 
   const handleFile = (file: File) => {
     if (!file.type.startsWith('image/')) {
-      toast.error('Please upload an image file');
+      toast.error('Please upload a valid image file');
+      return;
+    }
+
+    if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+      toast.error(`File size must be less than ${MAX_FILE_SIZE_MB}MB`);
       return;
     }
 
@@ -65,7 +71,7 @@ export default function ANPRMonitor() {
   };
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
+    if (e.target.files?.[0]) {
       handleFile(e.target.files[0]);
     }
   };
@@ -73,6 +79,11 @@ export default function ANPRMonitor() {
   const processANPR = async () => {
     if (!selectedImage) {
       toast.error('Please select an image first');
+      return;
+    }
+
+    if (!API_BASE_URL) {
+      toast.error('API configuration is missing');
       return;
     }
 
@@ -85,16 +96,17 @@ export default function ANPRMonitor() {
       });
 
       if (response.ok) {
-        const data = await response.json();
+        const data: ANPRResult = await response.json();
         setResult(data);
-        if (data.success) {
+
+        if (data.success && data.plate_number) {
           toast.success(`Plate recognized: ${data.plate_number}`);
         } else {
-          toast.warning(data.message);
+          toast.warning(data.message || 'Recognition completed with issues');
         }
       } else {
-        const error = await response.json();
-        toast.error(error.detail || 'ANPR processing failed');
+        const errorData = await response.json().catch(() => ({}));
+        toast.error(errorData.detail || 'ANPR processing failed');
       }
     } catch (error) {
       toast.error('Network error - please try again');
@@ -109,6 +121,17 @@ export default function ANPRMonitor() {
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  };
+
+  // Calculate bounding box position as percentage
+  const getBoundingBoxStyle = (box?: ANPRResult['bounding_box']) => {
+    if (!box) return {};
+    return {
+      left: `${(box.x1 / INPUT_IMAGE_SIZE) * 100}%`,
+      top: `${(box.y1 / INPUT_IMAGE_SIZE) * 100}%`,
+      width: `${((box.x2 - box.x1) / INPUT_IMAGE_SIZE) * 100}%`,
+      height: `${((box.y2 - box.y1) / INPUT_IMAGE_SIZE) * 100}%`,
+    };
   };
 
   return (
@@ -142,19 +165,13 @@ export default function ANPRMonitor() {
                 onDragOver={handleDrag}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
-                className={`
-                  border-2 border-dashed rounded-xl p-12 text-center cursor-pointer
-                  transition-all duration-200
-                  ${dragActive 
-                    ? 'border-blue-500 bg-blue-50' 
-                    : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
-                  }
-                `}
+                className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all duration-200
+                  ${dragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'}`}
               >
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*"
+                  accept={ACCEPTED_IMAGE_TYPES}
                   onChange={handleFileInput}
                   className="hidden"
                 />
@@ -165,7 +182,7 @@ export default function ANPRMonitor() {
                   Drop image here or click to browse
                 </p>
                 <p className="text-sm text-gray-500">
-                  Supports JPG, PNG, WEBP (max 10MB)
+                  Supports JPG, PNG, WEBP (max {MAX_FILE_SIZE_MB}MB)
                 </p>
               </div>
             ) : (
@@ -178,30 +195,18 @@ export default function ANPRMonitor() {
                   />
                   {result?.bounding_box && (
                     <div
-                      className="absolute border-2 border-green-500 bg-green-500/20"
-                      style={{
-                        left: `${(result.bounding_box.x1 / 640) * 100}%`,
-                        top: `${(result.bounding_box.y1 / 640) * 100}%`,
-                        width: `${((result.bounding_box.x2 - result.bounding_box.x1) / 640) * 100}%`,
-                        height: `${((result.bounding_box.y2 - result.bounding_box.y1) / 640) * 100}%`,
-                      }}
+                      className="absolute border-2 border-green-500 bg-green-500/20 pointer-events-none"
+                      style={getBoundingBoxStyle(result.bounding_box)}
                     />
                   )}
                 </div>
+
                 <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={clearImage}
-                    className="flex-1"
-                  >
+                  <Button variant="outline" onClick={clearImage} className="flex-1">
                     <RefreshCw className="w-4 h-4 mr-2" />
                     Clear
                   </Button>
-                  <Button
-                    onClick={processANPR}
-                    disabled={loading}
-                    className="flex-1"
-                  >
+                  <Button onClick={processANPR} disabled={loading} className="flex-1">
                     {loading ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -224,16 +229,14 @@ export default function ANPRMonitor() {
         <Card>
           <CardHeader>
             <CardTitle>Recognition Results</CardTitle>
-            <CardDescription>
-              ANPR processing output and confidence metrics
-            </CardDescription>
+            <CardDescription>ANPR processing output and confidence metrics</CardDescription>
           </CardHeader>
           <CardContent>
             {!result ? (
               <div className="text-center py-12 text-gray-500">
                 <ImageIcon className="w-16 h-16 mx-auto mb-4 opacity-50" />
                 <p className="text-lg font-medium">No results yet</p>
-                <p className="text-sm">Upload an image and click &quot;Recognize Plate&quot;</p>
+                <p className="text-sm">Upload an image and click "Recognize Plate"</p>
               </div>
             ) : (
               <div className="space-y-6">
@@ -257,7 +260,7 @@ export default function ANPRMonitor() {
                 </div>
 
                 {/* Plate Details */}
-                {result.success && (
+                {result.success && result.plate_number && (
                   <div className="space-y-4">
                     <div className="bg-gray-50 p-6 rounded-lg text-center">
                       <p className="text-sm text-gray-500 mb-2">Detected License Plate</p>
@@ -270,13 +273,13 @@ export default function ANPRMonitor() {
                       <div className="bg-blue-50 p-4 rounded-lg">
                         <p className="text-sm text-blue-600 mb-1">Confidence</p>
                         <p className="text-2xl font-bold text-blue-800">
-                          {(result.confidence! * 100).toFixed(1)}%
+                          {result.confidence ? (result.confidence * 100).toFixed(1) : 0}%
                         </p>
                       </div>
                       <div className="bg-purple-50 p-4 rounded-lg">
                         <p className="text-sm text-purple-600 mb-1">Processing Time</p>
                         <p className="text-2xl font-bold text-purple-800">
-                          {result.processing_time_ms?.toFixed(0)}ms
+                          {result.processing_time_ms?.toFixed(0) || 0}ms
                         </p>
                       </div>
                     </div>
@@ -288,7 +291,7 @@ export default function ANPRMonitor() {
                   <p className="text-sm font-medium text-gray-700 mb-2">Technical Details</p>
                   <div className="space-y-1 text-sm text-gray-600">
                     <p>Algorithm: YOLOv8 + EasyOCR</p>
-                    <p>Input Size: 640x640</p>
+                    <p>Input Size: {INPUT_IMAGE_SIZE}×{INPUT_IMAGE_SIZE}</p>
                     <p>Model: yolov8n.pt</p>
                   </div>
                 </div>
@@ -302,37 +305,15 @@ export default function ANPRMonitor() {
       <Card className="bg-slate-50 border-slate-200">
         <CardHeader>
           <CardTitle className="text-slate-800">ANPR Processing Pipeline</CardTitle>
-          <CardDescription>
-            How the Automatic Number Plate Recognition works
-          </CardDescription>
+          <CardDescription>How the Automatic Number Plate Recognition works</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {[
-              { 
-                step: 1, 
-                title: 'Image Capture', 
-                desc: 'Vehicle image captured via camera or upload',
-                icon: Camera
-              },
-              { 
-                step: 2, 
-                title: 'Preprocessing', 
-                desc: 'Resize to 640x640, normalize pixels',
-                icon: ImageIcon
-              },
-              { 
-                step: 3, 
-                title: 'YOLO Detection', 
-                desc: 'Detect license plate region with bounding box',
-                icon: Scan
-              },
-              { 
-                step: 4, 
-                title: 'OCR Recognition', 
-                desc: 'Extract characters using EasyOCR',
-                icon: CheckCircle
-              }
+              { step: 1, title: 'Image Capture', desc: 'Vehicle image captured via camera or upload', icon: Camera },
+              { step: 2, title: 'Preprocessing', desc: `Resize to ${INPUT_IMAGE_SIZE}×${INPUT_IMAGE_SIZE}, normalize pixels`, icon: ImageIcon },
+              { step: 3, title: 'YOLO Detection', desc: 'Detect license plate region with bounding box', icon: Scan },
+              { step: 4, title: 'OCR Recognition', desc: 'Extract characters using EasyOCR', icon: CheckCircle }
             ].map((item) => {
               const Icon = item.icon;
               return (
