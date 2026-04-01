@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from datetime import datetime
 import os
+import traceback   # ✅ ADDED (for better error logging)
 
 from app.config import get_settings
 from app.database import db
@@ -34,7 +35,12 @@ async def lifespan(app: FastAPI):
     print(f"📁 Database : {settings.DATABASE_NAME}")
     print(f"🔐 Algorithm: {settings.ALGORITHM}")
 
-    await db.connect()          # also seeds parking slots & creates indexes
+    try:  # ✅ ADDED safety wrapper
+        await db.connect()          # also seeds parking slots & creates indexes
+        print("✅ Database connected successfully")
+    except Exception as e:
+        print("❌ Database connection failed:")
+        traceback.print_exc()
 
     print("✅ Server ready!")
     print("=" * 58)
@@ -42,7 +48,10 @@ async def lifespan(app: FastAPI):
     yield
 
     print("\n🛑 Shutting down CVT-VACS Server...")
-    await db.disconnect()
+    try:  # ✅ ADDED safety wrapper
+        await db.disconnect()
+    except Exception:
+        pass
     print("👋 Goodbye!")
 
 
@@ -86,8 +95,10 @@ This API implements a **Two-Factor Authentication (2FA)** system combining:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://cvt-vacs.netlify.app"
+        "https://cvt-vacs.netlify.app",
+        "http://localhost:5173",  # ✅ ADDED for local testing
     ],
+    allow_origin_regex="https://.*\\.netlify\\.app",  # ✅ ADDED for Netlify previews
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -135,10 +146,14 @@ async def health_check():
     Health check endpoint.
     Returns database connectivity status and current UTC timestamp.
     """
-    from app.services.anpr_service import get_yolo_model, get_ocr_reader
+    try:  # ✅ ADDED safety wrapper (prevents 500 crash)
+        from app.services.anpr_service import get_yolo_model, get_ocr_reader
 
-    yolo_ready = get_yolo_model() is not None
-    ocr_ready  = get_ocr_reader()  is not None
+        yolo_ready = get_yolo_model() is not None
+        ocr_ready  = get_ocr_reader()  is not None
+    except Exception:
+        yolo_ready = False
+        ocr_ready = False
 
     return {
         "status":    "healthy",
