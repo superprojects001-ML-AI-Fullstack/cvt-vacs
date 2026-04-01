@@ -23,5 +23,6 @@ requests>=2.31.0
 # Environment & Utilities
 python-dotenv>=1.0.0
 
-# Computer Vision (NEW - for ANPR service)
+# Computer Vision & Image Processing
 opencv-python-headless>=4.9.0.78
+Pillow>=10.2.0
