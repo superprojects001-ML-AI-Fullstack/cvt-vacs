@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from datetime import datetime
 import os
-import traceback   # ✅ ADDED (for better error logging)
+import traceback
 
 from app.config import get_settings
 from app.database import db
@@ -35,8 +35,8 @@ async def lifespan(app: FastAPI):
     print(f"📁 Database : {settings.DATABASE_NAME}")
     print(f"🔐 Algorithm: {settings.ALGORITHM}")
 
-    try:  # ✅ ADDED safety wrapper
-        await db.connect()          # also seeds parking slots & creates indexes
+    try:
+        await db.connect()
         print("✅ Database connected successfully")
     except Exception as e:
         print("❌ Database connection failed:")
@@ -48,7 +48,7 @@ async def lifespan(app: FastAPI):
     yield
 
     print("\n🛑 Shutting down CVT-VACS Server...")
-    try:  # ✅ ADDED safety wrapper
+    try:
         await db.disconnect()
     except Exception:
         pass
@@ -96,9 +96,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://cvt-vacs.netlify.app",
-        "http://localhost:5173",  # ✅ ADDED for local testing
+        "http://localhost:5173",
     ],
-    allow_origin_regex="https://.*\\.netlify\\.app",  # ✅ ADDED for Netlify previews
+    allow_origin_regex="https://.*\\.netlify\\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -111,7 +111,7 @@ app.include_router(tokens.router)
 app.include_router(anpr.router)
 app.include_router(access.router)
 app.include_router(logs.router)
-app.include_router(camera_entry.router)   # ← NEW
+app.include_router(camera_entry.router)
 
 
 # ── Static files ──────────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ async def root():
             "tokens":       "/tokens",
             "anpr":         "/anpr",
             "access":       "/access",
-            "camera_entry": "/camera-entry",   # ← NEW
+            "camera_entry": "/camera-entry",
             "logs":         "/logs",
         },
     }
@@ -146,14 +146,13 @@ async def health_check():
     Health check endpoint.
     Returns database connectivity status and current UTC timestamp.
     """
-    try:  # ✅ ADDED safety wrapper (prevents 500 crash)
+    try:
         from app.services.anpr_service import get_yolo_model, get_ocr_reader
-
         yolo_ready = get_yolo_model() is not None
         ocr_ready  = get_ocr_reader()  is not None
     except Exception:
         yolo_ready = False
-        ocr_ready = False
+        ocr_ready  = False
 
     return {
         "status":    "healthy",
@@ -167,6 +166,26 @@ async def health_check():
     }
 
 
+@app.get("/my-ip", tags=["System"])
+async def get_my_ip():
+    """
+    Returns the outbound IP address of this server.
+    Use this to find Render's IP and whitelist it in MongoDB Atlas.
+    ⚠️ Remove this endpoint after whitelisting is done.
+    """
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get("https://api.ipify.org?format=json")
+            data = r.json()
+            return {
+                "server_ip": data.get("ip"),
+                "instruction": "Add this IP to MongoDB Atlas → Network Access → Add IP Address"
+            }
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/system-info", tags=["System"])
 async def system_info():
     """
@@ -174,21 +193,21 @@ async def system_info():
     Useful for verifying deployed settings without exposing secrets.
     """
     return {
-        "app_name":                  settings.APP_NAME,
-        "version":                   settings.APP_VERSION,
-        "debug_mode":                settings.DEBUG,
-        "token_expiry_hours":        settings.TOKEN_EXPIRY_HOURS,
-        "confidence_threshold":      settings.CONFIDENCE_THRESHOLD,
+        "app_name":                   settings.APP_NAME,
+        "version":                    settings.APP_VERSION,
+        "debug_mode":                 settings.DEBUG,
+        "token_expiry_hours":         settings.TOKEN_EXPIRY_HOURS,
+        "confidence_threshold":       settings.CONFIDENCE_THRESHOLD,
         "plate_confidence_threshold": settings.PLATE_CONFIDENCE_THRESHOLD,
         "features": {
-            "anpr_enabled":           True,
-            "colour_detection":       True,      # ← NEW
-            "token_authentication":   True,
-            "two_factor_auth":        True,
-            "camera_entry":           True,      # ← NEW
-            "parking_management":     True,      # ← NEW
-            "audit_logging":          True,
-            "sms_notifications":      bool(settings.TWILIO_ACCOUNT_SID),
+            "anpr_enabled":         True,
+            "colour_detection":     True,
+            "token_authentication": True,
+            "two_factor_auth":      True,
+            "camera_entry":         True,
+            "parking_management":   True,
+            "audit_logging":        True,
+            "sms_notifications":    bool(settings.TWILIO_ACCOUNT_SID),
         },
     }
 
