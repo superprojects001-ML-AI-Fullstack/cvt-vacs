@@ -16,11 +16,16 @@ class Database:
     client: Optional[AsyncIOMotorClient] = None
     db = None
 
-    @classmethod
+        @classmethod
     async def connect(cls):
         """Connect to MongoDB Atlas/Local"""
         try:
-            cls.client = AsyncIOMotorClient(settings.MONGODB_URL)
+            if not settings.MONGODB_URL:
+                print("⚠️  MONGODB_URL not set, using localhost fallback")
+                cls.client = AsyncIOMotorClient("mongodb://localhost:27017")
+            else:
+                cls.client = AsyncIOMotorClient(settings.MONGODB_URL)
+            
             cls.db = cls.client[settings.DATABASE_NAME]
 
             # Create indexes and seed data
@@ -30,8 +35,11 @@ class Database:
             print(f"✅ Connected to MongoDB: {settings.DATABASE_NAME}")
         except Exception as e:
             print(f"❌ MongoDB Connection Error: {e}")
-            raise
-
+            print("⚠️  Continuing without database - some features will be disabled")
+            # Don't raise - let the app start without DB for debugging
+            cls.client = None
+            cls.db = None
+            
     @classmethod
     async def disconnect(cls):
         """Disconnect from MongoDB"""

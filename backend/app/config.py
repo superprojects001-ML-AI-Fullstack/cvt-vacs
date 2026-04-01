@@ -3,6 +3,7 @@ Configuration settings for CVT-VACS Backend
 """
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+import os
 
 
 class Settings(BaseSettings):
@@ -11,12 +12,12 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     
-    # MongoDB
-    MONGODB_URL: str
-    DATABASE_NAME: str = "cvt_vacs_db"
+    # MongoDB - Add defaults for Render deployment
+    MONGODB_URL: str = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
+    DATABASE_NAME: str = os.getenv("DATABASE_NAME", "cvt_vacs_db")
     
-    # JWT Token Settings
-    SECRET_KEY: str
+    # JWT Token Settings - Add default for testing
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     TOKEN_EXPIRY_HOURS: int = 24
@@ -37,6 +38,7 @@ class Settings(BaseSettings):
     
     class Config:
         env_file = ".env"
+        extra = "ignore"  # Ignore extra env vars
 
 
 @lru_cache()
