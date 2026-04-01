@@ -16,7 +16,7 @@ class Database:
     client: Optional[AsyncIOMotorClient] = None
     db = None
 
-        @classmethod
+    @classmethod
     async def connect(cls):
         """Connect to MongoDB Atlas/Local"""
         try:
