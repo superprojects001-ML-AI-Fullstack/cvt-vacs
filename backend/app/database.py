@@ -1,6 +1,6 @@
 """
 MongoDB Database Connection and Operations (Async Motor)
-Updated: Added parking slot management and camera entry support
+Updated: Added parking slot management, camera entry support, and seed data
 """
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING
@@ -16,12 +16,17 @@ class Database:
     client: Optional[AsyncIOMotorClient] = None
     db = None
 
-    # ✅ NEW: safety check
+    # ──────────────────────────────
+    # Safety Check
+    # ──────────────────────────────
     @classmethod
     def check_db(cls):
         if cls.db is None:
             raise Exception("❌ Database not connected. Check MONGODB_URL.")
 
+    # ──────────────────────────────
+    # Connect / Disconnect
+    # ──────────────────────────────
     @classmethod
     async def connect(cls):
         """Connect to MongoDB Atlas/Local"""
@@ -32,10 +37,10 @@ class Database:
             cls.client = AsyncIOMotorClient(settings.MONGODB_URL)
             cls.db = cls.client[settings.DATABASE_NAME]
 
-            # ✅ NEW: force connection test
+            # Force connection test
             await cls.client.admin.command("ping")
 
-            # Create indexes and seed data
+            # Create indexes and seed parking slots
             await cls._create_indexes()
             await cls.seed_parking_slots()
 
@@ -43,7 +48,6 @@ class Database:
 
         except Exception as e:
             print(f"❌ MongoDB Connection Error: {e}")
-            # ❌ DO NOT silently continue with broken DB
             raise
 
     @classmethod
@@ -53,10 +57,12 @@ class Database:
             cls.client.close()
             print("🔌 Disconnected from MongoDB")
 
+    # ──────────────────────────────
+    # Indexes
+    # ──────────────────────────────
     @classmethod
     async def _create_indexes(cls):
-        """Create database indexes for optimal performance"""
-        cls.check_db()  # ✅ ADDED
+        cls.check_db()
 
         # Users collection
         await cls.db.users.create_index([("user_id", ASCENDING)], unique=True)
@@ -79,9 +85,7 @@ class Database:
         await cls.db.access_logs.create_index([("token_id", ASCENDING)])
 
         # Parking slots collection
-        await cls.db.parking_slots.create_index(
-            [("slot_id", ASCENDING)], unique=True
-        )
+        await cls.db.parking_slots.create_index([("slot_id", ASCENDING)], unique=True)
         await cls.db.parking_slots.create_index([("is_occupied", ASCENDING)])
         await cls.db.parking_slots.create_index([("plate_number", ASCENDING)])
 
@@ -91,9 +95,24 @@ class Database:
 
         print("📊 Database indexes created")
 
-    # ─────────────────────────────────────────────
+    # ──────────────────────────────
+    # Seed Parking Slots
+    # ──────────────────────────────
+    @classmethod
+    async def seed_parking_slots(cls):
+        """Initialize default parking slots if none exist"""
+        cls.check_db()
+        count = await cls.db.parking_slots.count_documents({})
+        if count == 0:
+            slots = [{"slot_id": f"PS-{i+1}", "is_occupied": False} for i in range(50)]
+            await cls.db.parking_slots.insert_many(slots)
+            print("📌 Seeded parking slots")
+        else:
+            print(f"📌 Parking slots already seeded ({count} slots)")
+
+    # ──────────────────────────────
     # User Operations
-    # ─────────────────────────────────────────────
+    # ──────────────────────────────
     @classmethod
     async def create_user(cls, user_data: Dict[str, Any]) -> str:
         cls.check_db()
@@ -110,9 +129,9 @@ class Database:
         cls.check_db()
         return await cls.db.users.find_one({"email": email})
 
-    # ─────────────────────────────────────────────
+    # ──────────────────────────────
     # Vehicle Operations
-    # ─────────────────────────────────────────────
+    # ──────────────────────────────
     @classmethod
     async def create_vehicle(cls, vehicle_data: Dict[str, Any]) -> str:
         cls.check_db()
@@ -138,9 +157,9 @@ class Database:
             {"$set": {"status": status, "updated_at": datetime.utcnow()}}
         )
 
-    # ─────────────────────────────────────────────
+    # ──────────────────────────────
     # Token Operations
-    # ─────────────────────────────────────────────
+    # ──────────────────────────────
     @classmethod
     async def create_token(cls, token_data: Dict[str, Any]) -> str:
         cls.check_db()
@@ -170,9 +189,9 @@ class Database:
         })
         return await cursor.to_list(length=10)
 
-    # ─────────────────────────────────────────────
+    # ──────────────────────────────
     # Access Log Operations
-    # ─────────────────────────────────────────────
+    # ──────────────────────────────
     @classmethod
     async def log_access_attempt(cls, log_data: Dict[str, Any]) -> str:
         cls.check_db()
@@ -201,9 +220,7 @@ class Database:
         return await cursor.to_list(length=limit)
 
     @classmethod
-    async def get_logs_by_date_range(
-        cls, start: datetime, end: datetime
-    ) -> List[Dict]:
+    async def get_logs_by_date_range(cls, start: datetime, end: datetime) -> List[Dict]:
         cls.check_db()
         cursor = cls.db.access_logs.find(
             {"timestamp": {"$gte": start, "$lte": end}}
@@ -242,6 +259,7 @@ class Database:
             "today_granted": today_granted,
             "today_denied": today_denied,
         }
+
 
 # Global database instance
 db = Database()

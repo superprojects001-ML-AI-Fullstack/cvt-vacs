@@ -23,6 +23,7 @@ from app.routers import vehicles, tokens, anpr, access, logs, camera_entry
 
 settings = get_settings()
 
+
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -40,6 +41,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print("❌ Database connection failed:")
         traceback.print_exc()
+        # Fail fast if DB is not available
+        raise e
 
     print("✅ Server ready!")
     print("=" * 58)
@@ -52,6 +55,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     print("👋 Goodbye!")
+
 
 # ── App factory ───────────────────────────────────────────────────────────────
 app = FastAPI(
@@ -88,6 +92,7 @@ This API implements a **Two-Factor Authentication (2FA)** system combining:
     lifespan=lifespan,
 )
 
+
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
@@ -101,8 +106,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # ── Routers ───────────────────────────────────────────────────────────────────
-# ⚡ FIX: Ensure /vehicles/register works correctly
 app.include_router(vehicles.router, prefix="/vehicles")
 app.include_router(tokens.router)
 app.include_router(anpr.router)
@@ -110,9 +115,11 @@ app.include_router(access.router)
 app.include_router(logs.router)
 app.include_router(camera_entry.router)
 
+
 # ── Static files ──────────────────────────────────────────────────────────────
 os.makedirs("static/uploads", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 # ── Root endpoints ────────────────────────────────────────────────────────────
 @app.get("/", tags=["System"])
@@ -133,12 +140,10 @@ async def root():
         },
     }
 
+
 @app.get("/health", tags=["System"])
 async def health_check():
-    """
-    Health check endpoint.
-    Returns database connectivity status and current UTC timestamp.
-    """
+    """Health check endpoint."""
     try:
         from app.services.anpr_service import get_yolo_model, get_ocr_reader
         yolo_ready = get_yolo_model() is not None
@@ -158,13 +163,10 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat(),
     }
 
+
 @app.get("/my-ip", tags=["System"])
 async def get_my_ip():
-    """
-    Returns the outbound IP address of this server.
-    Use this to find Render's IP and whitelist it in MongoDB Atlas.
-    ⚠️ Remove this endpoint after whitelisting is done.
-    """
+    """Returns Render server IP for MongoDB Atlas whitelist."""
     import httpx
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -177,12 +179,10 @@ async def get_my_ip():
     except Exception as e:
         return {"error": str(e)}
 
+
 @app.get("/system-info", tags=["System"])
 async def system_info():
-    """
-    System configuration overview.
-    Useful for verifying deployed settings without exposing secrets.
-    """
+    """System configuration overview."""
     return {
         "app_name":                   settings.APP_NAME,
         "version":                    settings.APP_VERSION,
@@ -202,9 +202,12 @@ async def system_info():
         },
     }
 
+
 # ── Dev entry-point ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
+
+    PORT = int(os.environ.get("PORT", 8000))  # Render assigns $PORT automatically
 
     print("""
     ╔══════════════════════════════════════════════════════════╗
@@ -221,7 +224,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=PORT,
         reload=settings.DEBUG,
         log_level="info",
     )
