@@ -23,7 +23,6 @@ from app.routers import vehicles, tokens, anpr, access, logs, camera_entry
 
 settings = get_settings()
 
-
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -54,7 +53,6 @@ async def lifespan(app: FastAPI):
         pass
     print("👋 Goodbye!")
 
-
 # ── App factory ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title=settings.APP_NAME,
@@ -84,12 +82,11 @@ This API implements a **Two-Factor Authentication (2FA)** system combining:
 | `/access` | 2FA access-control decision engine |
 | `/camera-entry` | **New** — camera pipeline, parking, exit |
 | `/logs` | Audit logs & performance metrics |
-    """,
+""",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
 )
-
 
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
@@ -104,7 +101,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # ── Routers ───────────────────────────────────────────────────────────────────
 # ⚡ FIX: Ensure /vehicles/register works correctly
 app.include_router(vehicles.router, prefix="/vehicles")
@@ -114,14 +110,11 @@ app.include_router(access.router)
 app.include_router(logs.router)
 app.include_router(camera_entry.router)
 
-
 # ── Static files ──────────────────────────────────────────────────────────────
 os.makedirs("static/uploads", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-
 # ── Root endpoints ────────────────────────────────────────────────────────────
-
 @app.get("/", tags=["System"])
 async def root():
     """API information and available endpoints."""
@@ -139,7 +132,6 @@ async def root():
             "logs":         "/logs",
         },
     }
-
 
 @app.get("/health", tags=["System"])
 async def health_check():
@@ -166,7 +158,6 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat(),
     }
 
-
 @app.get("/my-ip", tags=["System"])
 async def get_my_ip():
     """
@@ -185,7 +176,6 @@ async def get_my_ip():
             }
     except Exception as e:
         return {"error": str(e)}
-
 
 @app.get("/system-info", tags=["System"])
 async def system_info():
@@ -211,7 +201,6 @@ async def system_info():
             "sms_notifications":    bool(settings.TWILIO_ACCOUNT_SID),
         },
     }
-
 
 # ── Dev entry-point ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
