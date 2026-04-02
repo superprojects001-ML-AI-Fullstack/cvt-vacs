@@ -106,7 +106,8 @@ app.add_middleware(
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-app.include_router(vehicles.router)
+# ⚡ FIX: Ensure /vehicles/register works correctly
+app.include_router(vehicles.router, prefix="/vehicles")
 app.include_router(tokens.router)
 app.include_router(anpr.router)
 app.include_router(access.router)
