@@ -2,23 +2,26 @@
 Vehicle Management API Routes
 """
 from fastapi import APIRouter, HTTPException, status as http_status
-from typing import List
 from datetime import datetime
 
-from app.models.schemas import VehicleCreate, VehicleResponse
+from app.models.schemas import VehicleCreate
 from app.database import db
 
-router = APIRouter(prefix="/vehicles", tags=["Vehicles"])
+# ❗ FIX: REMOVE prefix here
+router = APIRouter(tags=["Vehicles"])
 
 
 @router.post("/register", response_model=dict, status_code=http_status.HTTP_201_CREATED)
 async def register_vehicle(vehicle: VehicleCreate):
+    # Normalize plate early
+    plate_number = vehicle.plate_number.upper().replace(" ", "")
+
     # Check if vehicle already exists
-    existing = await db.get_vehicle_by_plate(vehicle.plate_number)
+    existing = await db.get_vehicle_by_plate(plate_number)
     if existing:
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=f"Vehicle with plate {vehicle.plate_number} already registered"
+            detail=f"Vehicle with plate {plate_number} already registered"
         )
 
     # Check if user exists
@@ -30,7 +33,7 @@ async def register_vehicle(vehicle: VehicleCreate):
         )
 
     vehicle_data = {
-        "plate_number": vehicle.plate_number.upper().replace(" ", ""),
+        "plate_number": plate_number,
         "vehicle_type": vehicle.vehicle_type,
         "make": vehicle.make,
         "model": vehicle.model,
@@ -47,13 +50,15 @@ async def register_vehicle(vehicle: VehicleCreate):
         "success": True,
         "message": "Vehicle registered successfully",
         "vehicle_id": vehicle_id,
-        "plate_number": vehicle_data["plate_number"]
+        "plate_number": plate_number
     }
 
 
 @router.get("/plate/{plate_number}", response_model=dict)
 async def get_vehicle_by_plate(plate_number: str):
-    vehicle = await db.get_vehicle_by_plate(plate_number.upper().replace(" ", ""))
+    plate_number = plate_number.upper().replace(" ", "")
+
+    vehicle = await db.get_vehicle_by_plate(plate_number)
 
     if not vehicle:
         raise HTTPException(
@@ -61,7 +66,6 @@ async def get_vehicle_by_plate(plate_number: str):
             detail=f"Vehicle with plate {plate_number} not found"
         )
 
-    # ✅ FIX: Safe ObjectId conversion
     if "_id" in vehicle:
         vehicle["id"] = str(vehicle.pop("_id"))
 
@@ -92,10 +96,6 @@ async def get_all_vehicles(limit: int = 100, skip: int = 0):
     Get all registered vehicles (with pagination)
     """
 
-    # ❌ REMOVE useless import (kept structure intact otherwise)
-    # from motor.motor_asyncio import AsyncIOMotorClient
-
-    # ✅ FIX: Ensure DB is connected
     if db.db is None:
         raise HTTPException(
             status_code=500,
@@ -122,9 +122,8 @@ async def update_vehicle_status(plate_number: str, status: str):
     Update vehicle access status (active/inactive/banned)
     """
 
-    # ✅ FIX: normalize input
-    status = status.lower()
     plate_number = plate_number.upper().replace(" ", "")
+    status = status.lower()
 
     valid_statuses = ["active", "inactive", "banned", "suspended"]
 
