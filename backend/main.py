@@ -107,11 +107,11 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(vehicles.router, prefix="/vehicles")
-app.include_router(tokens.router)
-app.include_router(anpr.router)
-app.include_router(access.router)
-app.include_router(logs.router)
-app.include_router(camera_entry.router)
+app.include_router(tokens.router, prefix="/tokens")
+app.include_router(anpr.router, prefix="/anpr")
+app.include_router(access.router, prefix="/access")
+app.include_router(logs.router, prefix="/logs")
+app.include_router(camera_entry.router, prefix="/camera-entry")
 
 # ── Static files ──────────────────────────────────────────────────────────────
 os.makedirs("static/uploads", exist_ok=True)
@@ -194,27 +194,6 @@ async def system_info():
             "sms_notifications": bool(settings.TWILIO_ACCOUNT_SID),
         },
     }
-
-
-# ── Safe logs endpoints to avoid 500 errors ───────────────────────────────────
-@app.get("/logs/access", tags=["Logs"])
-async def get_access_logs(limit: int = 5):
-    try:
-        logs = await db.get_access_logs(limit=limit)
-        return {"success": True, "logs": logs}
-    except Exception as e:
-        print("❌ Error fetching access logs:", str(e))
-        return {"success": False, "logs": [], "error": str(e)}
-
-
-@app.get("/logs/statistics", tags=["Logs"])
-async def get_log_statistics():
-    try:
-        stats = await db.get_log_statistics()
-        return {"success": True, "statistics": stats}
-    except Exception as e:
-        print("❌ Error fetching log statistics:", str(e))
-        return {"success": False, "statistics": {}, "error": str(e)}
 
 
 # ── Dev entry-point ───────────────────────────────────────────────────────────

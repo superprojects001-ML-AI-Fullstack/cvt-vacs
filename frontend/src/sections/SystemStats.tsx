@@ -6,8 +6,8 @@ import { BarChart3, TrendingUp, Activity, Clock, Shield, AlertTriangle, CheckCir
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 
-// Constants (Configuration only - no business logic hardcoded)
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+// Constants
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 const REFRESH_INTERVAL_MS = 30000; // 30 seconds
 const ANPR_SCORE_THRESHOLD = 90;
 const GOOD_SCORE_THRESHOLD = 70;
@@ -40,6 +40,7 @@ export default function SystemStats() {
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
   const [stats, setStats] = useState<SystemStatistics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -48,29 +49,56 @@ export default function SystemStats() {
   }, []);
 
   const fetchData = async () => {
+    // Check API URL first
     if (!API_BASE_URL) {
-      console.error('API_BASE_URL is not configured');
+      console.error('❌ VITE_API_URL is not set!');
+      setError('API URL is not configured. Check environment variables.');
       setLoading(false);
       return;
     }
 
+    setError(null);
+    const perfUrl = `${API_BASE_URL}/logs/performance`;
+    const statsUrl = `${API_BASE_URL}/logs/statistics`;
+    
+    console.log('🔍 Fetching performance from:', perfUrl);
+    console.log('🔍 Fetching statistics from:', statsUrl);
+
     try {
       const [metricsRes, statsRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/logs/performance`),
-        fetch(`${API_BASE_URL}/logs/statistics`)
+        fetch(perfUrl),
+        fetch(statsUrl)
       ]);
+
+      console.log('📡 Performance status:', metricsRes.status);
+      console.log('📡 Statistics status:', statsRes.status);
 
       if (metricsRes.ok) {
         const metricsData = await metricsRes.json();
+        console.log('✅ Performance data:', metricsData);
         setMetrics(metricsData.metrics || null);
+      } else {
+        const errorText = await metricsRes.text();
+        console.error('❌ Performance error:', errorText);
       }
 
       if (statsRes.ok) {
         const statsData = await statsRes.json();
+        console.log('✅ Statistics data:', statsData);
         setStats(statsData.statistics || null);
+      } else {
+        const errorText = await statsRes.text();
+        console.error('❌ Statistics error:', errorText);
       }
+
+      // Show error if both failed
+      if (!metricsRes.ok && !statsRes.ok) {
+        setError(`Failed to fetch data: ${metricsRes.status}, ${statsRes.status}`);
+      }
+
     } catch (error) {
-      console.error('Failed to fetch statistics:', error);
+      console.error('❌ Network error:', error);
+      setError('Network error - check console for details');
     } finally {
       setLoading(false);
     }
@@ -111,6 +139,23 @@ export default function SystemStats() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+      </div>
+    );
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-center">
+        <AlertTriangle className="w-12 h-12 text-red-500 mb-4" />
+        <h3 className="text-lg font-semibold text-gray-800 mb-2">Failed to Load Statistics</h3>
+        <p className="text-gray-500 max-w-md">{error}</p>
+        <button 
+          onClick={fetchData}
+          className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+        >
+          Retry
+        </button>
       </div>
     );
   }

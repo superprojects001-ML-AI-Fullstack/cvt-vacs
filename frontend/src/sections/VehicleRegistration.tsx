@@ -52,7 +52,7 @@ export default function VehicleRegistration() {
     make: '',
     model: '',
     color: '',
-    user_id: ''                    // ← No longer hardcoded
+    user_id: ''
   });
 
   useEffect(() => {
@@ -60,17 +60,24 @@ export default function VehicleRegistration() {
   }, []);
 
   const fetchVehicles = async () => {
+    const url = `${API_BASE_URL}/vehicles/all?limit=${API_LIMIT}`;
+    console.log('🔍 Fetching vehicles from:', url);
+    
     try {
-      const response = await fetch(`${API_BASE_URL}/vehicles/all?limit=${API_LIMIT}`);
+      const response = await fetch(url);
+      console.log('📡 Response status:', response.status);
       
       if (response.ok) {
         const data = await response.json();
+        console.log('✅ Vehicles data:', data);
         setVehicles(data.vehicles || []);
       } else {
-        toast.error('Failed to fetch vehicles');
+        const errorText = await response.text();
+        console.error('❌ Error response:', errorText);
+        toast.error(`Failed to fetch vehicles: ${response.status}`);
       }
     } catch (error) {
-      console.error('Failed to fetch vehicles:', error);
+      console.error('❌ Network error:', error);
       toast.error('Network error while loading vehicles');
     } finally {
       setLoading(false);
@@ -88,28 +95,33 @@ export default function VehicleRegistration() {
 
     setIsSubmitting(true);
 
+    const url = `${API_BASE_URL}/vehicles/register`;
+    console.log('📝 Registering vehicle at:', url);
+    console.log('📦 Payload:', formData);
+
     try {
-      const response = await fetch(`${API_BASE_URL}/vehicles/register`, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       });
 
+      console.log('📡 Response status:', response.status);
+
       if (response.ok) {
+        const data = await response.json();
+        console.log('✅ Registration success:', data);
         toast.success('Vehicle registered successfully!');
         setIsDialogOpen(false);
-        
-        // Reset form
         resetForm();
-        
-        // Refresh the list
         fetchVehicles();
       } else {
         const errorData = await response.json().catch(() => ({}));
-        toast.error(errorData.detail || 'Failed to register vehicle');
+        console.error('❌ Registration error:', errorData);
+        toast.error(errorData.detail || `Failed to register vehicle: ${response.status}`);
       }
     } catch (error) {
-      console.error('Registration error:', error);
+      console.error('❌ Network error:', error);
       toast.error('Network error - please try again');
     } finally {
       setIsSubmitting(false);
@@ -123,7 +135,7 @@ export default function VehicleRegistration() {
       make: '',
       model: '',
       color: '',
-      user_id: ''                    // Will be filled when user is logged in
+      user_id: ''
     });
   };
 
@@ -153,11 +165,7 @@ export default function VehicleRegistration() {
     );
   };
 
-  // Optional: You can call this when opening dialog if you have auth context
   const openRegisterDialog = () => {
-    // TODO: Replace with real user ID from your auth system
-    // Example: setFormData(prev => ({ ...prev, user_id: currentUser?.id || '' }));
-    
     setIsDialogOpen(true);
   };
 

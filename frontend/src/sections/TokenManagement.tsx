@@ -11,8 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 
-// Constants (These are acceptable as they are configuration, not business logic)
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+// Constants
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 const DEFAULT_VEHICLE_TYPE = 'sedan';
 const DEFAULT_LIMIT = 100;
 
@@ -44,14 +44,14 @@ export default function VehicleRegistration() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Form state - NO hardcoded values
+  // Form state
   const [formData, setFormData] = useState({
     plate_number: '',
     vehicle_type: DEFAULT_VEHICLE_TYPE,
     make: '',
     model: '',
     color: '',
-    user_id: ''                    // Completely empty - will be filled by user or auth
+    user_id: ''
   });
 
   useEffect(() => {
@@ -59,24 +59,33 @@ export default function VehicleRegistration() {
   }, []);
 
   const fetchVehicles = async () => {
+    // Debug: Check if API URL is configured
     if (!API_BASE_URL) {
-      toast.error('API URL is not configured');
+      console.error('❌ VITE_API_URL is not set!');
+      toast.error('API URL is not configured. Check environment variables.');
       setLoading(false);
       return;
     }
 
+    const url = `${API_BASE_URL}/vehicles/all?limit=${DEFAULT_LIMIT}`;
+    console.log('🔍 Fetching from:', url);
+
     try {
-      const response = await fetch(`${API_BASE_URL}/vehicles/all?limit=${DEFAULT_LIMIT}`);
-      
+      const response = await fetch(url);
+      console.log('📡 Response status:', response.status);
+
       if (response.ok) {
         const data = await response.json();
+        console.log('✅ Data received:', data);
         setVehicles(data.vehicles || []);
       } else {
-        toast.error('Failed to fetch vehicles');
+        const errorText = await response.text();
+        console.error('❌ Error response:', errorText);
+        toast.error(`Failed to fetch vehicles: ${response.status}`);
       }
     } catch (error) {
-      console.error('Failed to fetch vehicles:', error);
-      toast.error('Network error while loading vehicles');
+      console.error('❌ Network error:', error);
+      toast.error('Network error - check console for details');
     } finally {
       setLoading(false);
     }
@@ -95,27 +104,41 @@ export default function VehicleRegistration() {
       return;
     }
 
+    if (!API_BASE_URL) {
+      toast.error('API URL is not configured');
+      return;
+    }
+
     setIsSubmitting(true);
 
+    const url = `${API_BASE_URL}/vehicles/register`;
+    console.log('📝 POST to:', url);
+    console.log('📦 Payload:', formData);
+
     try {
-      const response = await fetch(`${API_BASE_URL}/vehicles/register`, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       });
 
+      console.log('📡 Response status:', response.status);
+
       if (response.ok) {
+        const data = await response.json();
+        console.log('✅ Registration success:', data);
         toast.success('Vehicle registered successfully!');
         setIsDialogOpen(false);
         resetForm();
-        fetchVehicles();           // Refresh list
+        fetchVehicles();
       } else {
         const errorData = await response.json().catch(() => ({}));
-        toast.error(errorData.detail || 'Failed to register vehicle');
+        console.error('❌ Registration failed:', errorData);
+        toast.error(errorData.detail || `Failed: ${response.status}`);
       }
     } catch (error) {
-      console.error('Registration error:', error);
-      toast.error('Network error - please try again');
+      console.error('❌ Network error:', error);
+      toast.error('Network error - check console');
     } finally {
       setIsSubmitting(false);
     }
@@ -159,11 +182,7 @@ export default function VehicleRegistration() {
   };
 
   const openRegisterDialog = () => {
-    // TODO: When you implement authentication, automatically set user_id here
-    // Example:
-    // setFormData(prev => ({ ...prev, user_id: currentUser?.id || '' }));
-
-    resetForm();           // Ensure clean form when opening
+    resetForm();
     setIsDialogOpen(true);
   };
 

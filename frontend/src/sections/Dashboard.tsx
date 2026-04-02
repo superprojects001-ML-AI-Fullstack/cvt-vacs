@@ -11,17 +11,18 @@ import {
   Activity,
   ArrowRight,
   Shield,
-  Camera
+  Camera,
+  AlertTriangle
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
 // Configuration Constants
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 const REFRESH_INTERVAL_MS = 30000; // 30 seconds
 const RECENT_LOGS_LIMIT = 5;
-const SYSTEM_VERSION = '1.0.0'; // Can be moved to environment variable later
+const SYSTEM_VERSION = '1.0.0';
 
 interface DashboardStats {
   total_users: number;
@@ -50,6 +51,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentAccess, setRecentAccess] = useState<RecentAccess[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchDashboardData();
@@ -58,30 +60,59 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   }, []);
 
   const fetchDashboardData = async () => {
+    // Check API URL first
     if (!API_BASE_URL) {
+      console.error('❌ VITE_API_URL is not set!');
+      setError('API URL is not configured. Check environment variables.');
       toast.error('API configuration is missing');
       setLoading(false);
       return;
     }
 
+    setError(null);
+    const statsUrl = `${API_BASE_URL}/logs/statistics`;
+    const logsUrl = `${API_BASE_URL}/logs/access?limit=${RECENT_LOGS_LIMIT}`;
+    
+    console.log('🔍 Fetching stats from:', statsUrl);
+    console.log('🔍 Fetching logs from:', logsUrl);
+
     try {
       const [statsRes, logsRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/logs/statistics`),
-        fetch(`${API_BASE_URL}/logs/access?limit=${RECENT_LOGS_LIMIT}`)
+        fetch(statsUrl),
+        fetch(logsUrl)
       ]);
+
+      console.log('📡 Stats status:', statsRes.status);
+      console.log('📡 Logs status:', logsRes.status);
 
       if (statsRes.ok) {
         const statsData = await statsRes.json();
+        console.log('✅ Stats data:', statsData);
         setStats(statsData.statistics || null);
+      } else {
+        const errorText = await statsRes.text();
+        console.error('❌ Stats error:', errorText);
       }
 
       if (logsRes.ok) {
         const logsData = await logsRes.json();
+        console.log('✅ Logs data:', logsData);
         setRecentAccess(logsData.logs || []);
+      } else {
+        const errorText = await logsRes.text();
+        console.error('❌ Logs error:', errorText);
       }
+
+      // Show error if both failed
+      if (!statsRes.ok && !logsRes.ok) {
+        setError(`Failed to fetch data: Stats ${statsRes.status}, Logs ${logsRes.status}`);
+        toast.error('Failed to load dashboard data');
+      }
+
     } catch (error) {
-      console.error('Failed to fetch dashboard data:', error);
-      toast.error('Failed to load dashboard data');
+      console.error('❌ Network error:', error);
+      setError('Network error - check console for details');
+      toast.error('Network error - check console');
     } finally {
       setLoading(false);
     }
@@ -173,6 +204,23 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+      </div>
+    );
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-center">
+        <AlertTriangle className="w-12 h-12 text-red-500 mb-4" />
+        <h3 className="text-lg font-semibold text-gray-800 mb-2">Failed to Load Dashboard</h3>
+        <p className="text-gray-500 max-w-md mb-4">{error}</p>
+        <button 
+          onClick={fetchDashboardData}
+          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+        >
+          Retry
+        </button>
       </div>
     );
   }
