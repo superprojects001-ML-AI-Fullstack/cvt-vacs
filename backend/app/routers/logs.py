@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 
 from app.database import db
 
-router = APIRouter(prefix="/logs", tags=["Logs & Statistics"])
+# ❗ FIX: REMOVE prefix
+router = APIRouter(tags=["Logs & Statistics"])
 
 
 @router.get("/access", response_model=dict)
@@ -18,11 +19,11 @@ async def get_access_logs(
 ):
     try:
         if plate_number:
+            plate_number = plate_number.upper().replace(" ", "")
             logs = await db.get_logs_by_plate(plate_number, limit)
         else:
             logs = await db.get_access_logs(limit, skip)
 
-        # ✅ FIX: Safe ObjectId conversion
         for log in logs:
             if "_id" in log:
                 log["id"] = str(log.pop("_id"))
@@ -46,7 +47,6 @@ async def get_today_logs():
         today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         logs = await db.get_logs_by_date_range(today_start, datetime.utcnow())
 
-        # ✅ FIX: Safe ObjectId conversion
         for log in logs:
             if "_id" in log:
                 log["id"] = str(log.pop("_id"))
@@ -101,32 +101,28 @@ async def get_performance_metrics():
 
         total = len(logs)
 
-        # ✅ FIX: Safe boolean handling
         tp = sum(1 for log in logs if log.get("access_decision") == "GRANTED" and log.get("token_valid") is True)
         tn = sum(1 for log in logs if log.get("access_decision") == "DENIED" and log.get("token_valid") is False)
         fp = sum(1 for log in logs if log.get("access_decision") == "GRANTED" and log.get("token_valid") is False)
         fn = sum(1 for log in logs if log.get("access_decision") == "DENIED" and log.get("token_valid") is True)
 
-        accuracy = (tp + tn) / total if total > 0 else 0
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        accuracy = (tp + tn) / total if total else 0
+        precision = tp / (tp + fp) if (tp + fp) else 0
+        recall = tp / (tp + fn) if (tp + fn) else 0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) else 0
 
-        fpr = fp / (fp + tn) if (fp + tn) > 0 else 0
-        fnr = fn / (fn + tp) if (fn + tp) > 0 else 0
+        fpr = fp / (fp + tn) if (fp + tn) else 0
+        fnr = fn / (fn + tp) if (fn + tp) else 0
 
-        # ✅ FIX: Avoid None values breaking math
         anpr_times = [log.get("anpr_processing_time_ms") for log in logs if isinstance(log.get("anpr_processing_time_ms"), (int, float))]
         token_times = [log.get("token_verification_time_ms") for log in logs if isinstance(log.get("token_verification_time_ms"), (int, float))]
         total_times = [log.get("total_response_time_ms") for log in logs if isinstance(log.get("total_response_time_ms"), (int, float))]
 
-        avg_anpr_time = sum(anpr_times) / len(anpr_times) if anpr_times else 0
         avg_token_time = sum(token_times) / len(token_times) if token_times else 0
         avg_total_time = sum(total_times) / len(total_times) if total_times else 0
 
-        success_rate = (tp + tn) / total if total > 0 else 0
+        success_rate = (tp + tn) / total if total else 0
 
-        # ✅ FIX: Safe timestamp handling
         one_hour_ago = datetime.utcnow() - timedelta(hours=1)
         recent_logs = [
             log for log in logs
@@ -164,9 +160,10 @@ async def get_vehicle_access_history(
     limit: int = Query(50, ge=1, le=200)
 ):
     try:
+        plate_number = plate_number.upper().replace(" ", "")
+
         logs = await db.get_logs_by_plate(plate_number, limit)
 
-        # ✅ FIX: Safe ObjectId conversion
         for log in logs:
             if "_id" in log:
                 log["id"] = str(log.pop("_id"))

@@ -1,49 +1,38 @@
 """
 Access Control API Routes - Main 2FA Entry Point
 """
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Body
 from typing import Optional
 
-from app.models.schemas import AccessRequest, AccessResponse
 from app.services.decision_engine import DecisionEngine
 
-router = APIRouter(prefix="/access", tags=["Access Control"])
+# ❗ FIX: remove prefix
+router = APIRouter(tags=["Access Control"])
 
 
 @router.post("/verify", response_model=dict)
 async def verify_access(
-    token: str,
-    image_base64: Optional[str] = None,
-    plate_number: Optional[str] = None
+    token: str = Body(...),
+    image_base64: Optional[str] = Body(None),
+    plate_number: Optional[str] = Body(None)
 ):
     """
     Two-Factor Authentication for Vehicle Access
-    
-    This endpoint implements the complete 2FA verification:
-    1. Token verification (something you have)
-    2. ANPR verification (something you are - vehicle identity)
-    
-    Args:
-        token: Authentication token (JWT/QR/OTP)
-        image_base64: Vehicle image for ANPR (optional if plate provided)
-        plate_number: Pre-detected plate (optional if image provided)
-    
-    Returns:
-        Access decision with full details
     """
+
     if not image_base64 and not plate_number:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Either image_base64 or plate_number must be provided"
         )
-    
+
     try:
         result = await DecisionEngine.evaluate_access(
             token=token,
             image_base64=image_base64,
             detected_plate=plate_number
         )
-        
+
         return {
             "success": result["decision"] == "GRANTED",
             "decision": result["decision"],
@@ -58,7 +47,7 @@ async def verify_access(
             "log_id": result["log_id"],
             "processing_times": result.get("processing_times", {})
         }
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -68,20 +57,18 @@ async def verify_access(
 
 @router.post("/verify-manual", response_model=dict)
 async def verify_access_manual(
-    token: str,
-    plate_number: str
+    token: str = Body(...),
+    plate_number: str = Body(...)
 ):
     """
-    Manual access verification (for testing/backup)
-    
-    Uses manually entered plate number instead of ANPR
+    Manual access verification (backup)
     """
     try:
         result = await DecisionEngine.evaluate_manual_access(
             token=token,
-            manual_plate=plate_number
+            manual_plate=plate_number.upper().replace(" ", "")
         )
-        
+
         return {
             "success": result["decision"] == "GRANTED",
             "decision": result["decision"],
@@ -93,7 +80,7 @@ async def verify_access_manual(
             "message": result["message"],
             "log_id": result["log_id"]
         }
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -107,10 +94,10 @@ async def get_access_system_status():
     Get access control system status
     """
     from app.services.anpr_service import get_yolo_model, get_ocr_reader
-    
+
     yolo_loaded = get_yolo_model() is not None
     ocr_loaded = get_ocr_reader() is not None
-    
+
     return {
         "status": "operational" if (yolo_loaded and ocr_loaded) else "degraded",
         "2fa_enabled": True,
