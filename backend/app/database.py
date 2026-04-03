@@ -111,6 +111,31 @@ class Database:
             print(f"📌 Parking slots already seeded ({count} slots)")
 
     # ──────────────────────────────
+# Parking Slot Operations
+# ──────────────────────────────
+@classmethod
+async def get_parking_summary(cls) -> Dict[str, Any]:
+    cls.check_db()
+    
+    total = await cls.db.parking_slots.count_documents({})
+    occupied = await cls.db.parking_slots.count_documents({"is_occupied": True})
+    available = total - occupied
+
+    cursor = cls.db.parking_slots.find().sort("slot_id", ASCENDING)
+    slots = await cursor.to_list(length=total)
+
+    # Clean up MongoDB _id field
+    for slot in slots:
+        slot.pop("_id", None)
+
+    return {
+        "total": total,
+        "occupied": occupied,
+        "available": available,
+        "slots": slots
+    }
+
+    # ──────────────────────────────
     # User Operations
     # ──────────────────────────────
     @classmethod

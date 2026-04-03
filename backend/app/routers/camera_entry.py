@@ -346,8 +346,6 @@ async def process_exit(request: ExitRequest):
 @router.get("/slots", response_model=dict)
 async def get_parking_slots():
     summary = await db.get_parking_summary()
-    for slot in summary["slots"]:
-        slot.pop("_id", None)
     return {"success": True, **summary}
 
 
