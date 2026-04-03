@@ -1,5 +1,6 @@
 """
 Camera Entry Router - Auto ANPR + Token Generation + Parking Allocation
+Updated: Auto-create users and vehicles for new entries
 """
 from fastapi import APIRouter, HTTPException, status, Query
 from pydantic import BaseModel
@@ -10,7 +11,6 @@ from app.services.anpr_service import ANPRService
 from app.services.token_service import TokenService
 from app.database import db
 
-# ❗ FIX: REMOVE prefix
 router = APIRouter(tags=["Camera Entry"])
 
 
@@ -34,7 +34,83 @@ class ExitRequest(BaseModel):
 
 
 # ──────────────────────────────────────────────
-# Helper
+# NEW: Auto-create helpers
+# ──────────────────────────────────────────────
+
+async def ensure_user_exists(user_id: str) -> bool:
+    """
+    Check if user exists, create if not
+    Returns True if user exists or was created successfully
+    """
+    try:
+        existing = await db.get_user_by_id(user_id)
+        if existing:
+            return True
+        
+        # Auto-create user with minimal info
+        user_data = {
+            "user_id": user_id,
+            "email": f"{user_id}@cvt-vacs.auto",
+            "name": f"Auto User {user_id}",
+            "phone": "",
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow(),
+            "is_auto_created": True
+        }
+        
+        await db.create_user(user_data)
+        print(f"✅ Auto-created user: {user_id}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Failed to create user {user_id}: {e}")
+        return False
+
+
+async def ensure_vehicle_exists(plate_number: str, color: str = "unknown", user_id: str = "auto_user") -> tuple[bool, Optional[dict]]:
+    """
+    Check if vehicle exists, auto-register if not
+    Returns (success, vehicle_data)
+    """
+    try:
+        # Check if vehicle exists
+        existing = await db.get_vehicle_by_plate(plate_number)
+        if existing:
+            return True, existing
+        
+        # Ensure user exists first
+        user_created = await ensure_user_exists(user_id)
+        if not user_created:
+            return False, None
+        
+        # Auto-register vehicle
+        vehicle_data = {
+            "plate_number": plate_number,
+            "vehicle_type": "sedan",  # Default
+            "make": "Unknown",
+            "model": "Unknown",
+            "color": color,
+            "user_id": user_id,
+            "registered_at": datetime.utcnow(),
+            "status": "active",
+            "last_access": None,
+            "is_auto_registered": True
+        }
+        
+        vehicle_id = await db.create_vehicle(vehicle_data)
+        print(f"✅ Auto-registered vehicle: {plate_number} for user: {user_id}")
+        
+        # Return the created vehicle
+        created = await db.get_vehicle_by_plate(plate_number)
+        return True, created
+        
+    except Exception as e:
+        print(f"❌ Failed to register vehicle {plate_number}: {e}")
+        return False, None
+
+
+# ──────────────────────────────────────────────
+# Helper - Build entry response (MODIFIED)
 # ──────────────────────────────────────────────
 
 async def _build_entry_response(
@@ -49,19 +125,21 @@ async def _build_entry_response(
 
     plate_number = plate_number.upper().replace(" ", "")
 
-    # 1. Check vehicle
-    vehicle = await db.get_vehicle_by_plate(plate_number)
-    if not vehicle:
+    # 1. Check/Auto-create vehicle (and user) - MODIFIED
+    vehicle_exists, vehicle = await ensure_vehicle_exists(plate_number, color, user_id)
+    
+    if not vehicle_exists or not vehicle:
         return {
             "success": False,
             "registered": False,
             "plate_number": plate_number,
             "color": color,
             "color_hex": color_hex,
-            "message": f"Vehicle {plate_number} is NOT registered. Please register before entry.",
+            "message": f"Failed to auto-register vehicle {plate_number}. Please try again or use manual registration.",
             "token": None,
             "parking_slot": None,
             "parking_zone": None,
+            "auto_registered": False
         }
 
     # 2. Token
@@ -102,6 +180,7 @@ async def _build_entry_response(
         "parking_zone": parking_zone,
         "processing_time_ms": processing_time_ms,
         "timestamp": datetime.utcnow(),
+        "auto_registered": vehicle.get("is_auto_registered", False)
     })
 
     await db.log_access_attempt({
@@ -118,7 +197,7 @@ async def _build_entry_response(
         "timestamp": datetime.utcnow(),
     })
 
-    # 5. Response
+    # 5. Response - MODIFIED to include auto_registered flag
     return {
         "success": True,
         "registered": True,
@@ -144,11 +223,12 @@ async def _build_entry_response(
             if parking_slot
             else "Entry granted — Car park is FULL, no slot available."
         ),
+        "auto_registered": vehicle.get("is_auto_registered", False)
     }
 
 
 # ──────────────────────────────────────────────
-# Endpoints
+# Endpoints (unchanged)
 # ──────────────────────────────────────────────
 
 @router.post("/process", response_model=dict)
@@ -179,6 +259,7 @@ async def process_camera_entry(request: CameraEntryRequest):
             "token": None,
             "parking_slot": None,
             "parking_zone": None,
+            "auto_registered": False
         }
 
     return await _build_entry_response(
