@@ -7,7 +7,6 @@ from datetime import datetime
 from app.models.schemas import VehicleCreate
 from app.database import db
 
-# ❗ FIX: REMOVE prefix here
 router = APIRouter(tags=["Vehicles"])
 
 
@@ -24,21 +23,39 @@ async def register_vehicle(vehicle: VehicleCreate):
             detail=f"Vehicle with plate {plate_number} already registered"
         )
 
-    # Check if user exists
-    user = await db.get_user_by_id(vehicle.user_id)
-    if not user:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND,
-            detail=f"User {vehicle.user_id} not found"
-        )
+    # ✅ HANDLE USER (Auto-create if not exists)
+    user_id = vehicle.user_id
 
+    if user_id:
+        user = await db.get_user_by_id(user_id)
+
+        if not user:
+            # Auto-create user
+            user_data = {
+                "user_id": user_id,
+                "created_at": datetime.utcnow()
+            }
+            await db.db.users.insert_one(user_data)
+    else:
+        # Optional: generate a default user_id if none provided
+        user_id = f"user_{plate_number}"
+
+        user = await db.get_user_by_id(user_id)
+        if not user:
+            user_data = {
+                "user_id": user_id,
+                "created_at": datetime.utcnow()
+            }
+            await db.db.users.insert_one(user_data)
+
+    # Create vehicle
     vehicle_data = {
         "plate_number": plate_number,
         "vehicle_type": vehicle.vehicle_type,
         "make": vehicle.make,
         "model": vehicle.model,
         "color": vehicle.color,
-        "user_id": vehicle.user_id,
+        "user_id": user_id,
         "registered_at": datetime.utcnow(),
         "status": "active",
         "last_access": None
@@ -50,7 +67,8 @@ async def register_vehicle(vehicle: VehicleCreate):
         "success": True,
         "message": "Vehicle registered successfully",
         "vehicle_id": vehicle_id,
-        "plate_number": plate_number
+        "plate_number": plate_number,
+        "user_id": user_id
     }
 
 
