@@ -17,12 +17,12 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 
 // Configuration Constants
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 const PARKING_REFRESH_INTERVAL_MS = 15000;     // 15 seconds
 const CAMERA_WIDTH_IDEAL = 1280;
 const CAMERA_HEIGHT_IDEAL = 720;
 const IMAGE_QUALITY = 0.92;
-const RECENT_LOGS_LIMIT = 5; // Not used here but kept for consistency
+const RECENT_LOGS_LIMIT = 5;
 
 // Types
 interface EntryResult {
@@ -91,17 +91,28 @@ export default function CameraEntry() {
 
   // Fetch parking data
   const fetchParking = useCallback(async () => {
-    if (!API_BASE_URL) return;
+    if (!API_BASE_URL) {
+      console.error('❌ VITE_API_URL is not set!');
+      return;
+    }
+
+    const url = `${API_BASE_URL}/camera-entry/slots`;
+    console.log('🔍 Fetching parking from:', url);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/camera-entry/slots`);
+      const res = await fetch(url);
+      console.log('📡 Parking status:', res.status);
+
       if (res.ok) {
         const data = await res.json();
+        console.log('✅ Parking data:', data);
         setParking(data);
+      } else {
+        const errorText = await res.text();
+        console.error('❌ Parking error:', errorText);
       }
     } catch (error) {
-      // Silent fail - parking is supplementary
-      console.warn('Failed to fetch parking data');
+      console.error('❌ Failed to fetch parking data:', error);
     } finally {
       setParkingLoading(false);
     }
@@ -176,21 +187,28 @@ export default function CameraEntry() {
   // Process captured image
   const processEntry = async (image: string) => {
     if (!API_BASE_URL) {
-      toast.error('API URL is not configured');
+      console.error('❌ VITE_API_URL is not set!');
+      toast.error('API URL is not configured. Check environment variables.');
       return;
     }
+
+    const url = `${API_BASE_URL}/camera-entry/process`;
+    console.log('📝 Processing entry at:', url);
 
     setProcessing(true);
     setResult(null);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/camera-entry/process`, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image_base64: image }),
       });
 
+      console.log('📡 Process status:', res.status);
+
       const data: EntryResult = await res.json();
+      console.log('✅ Entry result:', data);
       setResult(data);
 
       if (data.success) {
@@ -200,6 +218,7 @@ export default function CameraEntry() {
         toast.warning(data.message || 'Entry failed');
       }
     } catch (error) {
+      console.error('❌ Network error:', error);
       toast.error('Network error — please try again');
     } finally {
       setProcessing(false);
@@ -221,13 +240,22 @@ export default function CameraEntry() {
   // Manual Entry
   const handleManualEntry = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!manualPlate.trim() || !API_BASE_URL) return;
+    if (!manualPlate.trim() || !API_BASE_URL) {
+      if (!API_BASE_URL) {
+        toast.error('API URL is not configured');
+      }
+      return;
+    }
+
+    const url = `${API_BASE_URL}/camera-entry/manual`;
+    console.log('📝 Manual entry at:', url);
+    console.log('📦 Payload:', { plate_number: manualPlate.trim().toUpperCase(), vehicle_color: manualColor.trim() || 'unknown' });
 
     setProcessing(true);
     setResult(null);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/camera-entry/manual`, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -236,7 +264,10 @@ export default function CameraEntry() {
         }),
       });
 
+      console.log('📡 Manual entry status:', res.status);
+
       const data: EntryResult = await res.json();
+      console.log('✅ Manual entry result:', data);
       setResult(data);
 
       if (data.success) {
@@ -248,7 +279,8 @@ export default function CameraEntry() {
       } else {
         toast.warning(data.message || 'Manual entry failed');
       }
-    } catch {
+    } catch (error) {
+      console.error('❌ Network error:', error);
       toast.error('Network error — please try again');
     } finally {
       setProcessing(false);
@@ -258,17 +290,30 @@ export default function CameraEntry() {
   // Vehicle Exit
   const handleExit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!exitPlate.trim() || !API_BASE_URL) return;
+    if (!exitPlate.trim() || !API_BASE_URL) {
+      if (!API_BASE_URL) {
+        toast.error('API URL is not configured');
+      }
+      return;
+    }
+
+    const url = `${API_BASE_URL}/camera-entry/exit`;
+    console.log('📝 Exit at:', url);
+    console.log('📦 Payload:', { plate_number: exitPlate.trim().toUpperCase() });
 
     setExitLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/camera-entry/exit`, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ plate_number: exitPlate.trim().toUpperCase() }),
       });
 
+      console.log('📡 Exit status:', res.status);
+
       const data = await res.json();
+      console.log('✅ Exit result:', data);
+
       if (data.success) {
         toast.success(data.message || 'Exit recorded successfully');
         fetchParking();
@@ -276,7 +321,8 @@ export default function CameraEntry() {
       } else {
         toast.warning(data.message || 'Exit failed');
       }
-    } catch {
+    } catch (error) {
+      console.error('❌ Network error:', error);
       toast.error('Network error');
     } finally {
       setExitLoading(false);
@@ -718,9 +764,21 @@ export default function CameraEntry() {
           ) : !parking ? (
             <p className="text-center text-gray-400 py-8">Unable to load parking data</p>
           ) : (
-            /* Parking grid rendering remains the same as before */
-            // ... (your existing parking grid code)
-            <div>Your parking grid code here (it was already clean)</div>
+            <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
+              {parking.slots.map((slot) => (
+                <div
+                  key={slot.slot_id}
+                  className={`p-2 rounded-lg text-center text-xs ${
+                    slot.is_occupied
+                      ? 'bg-red-100 text-red-700 border border-red-200'
+                      : 'bg-green-100 text-green-700 border border-green-200'
+                  }`}
+                >
+                  <p className="font-bold">{slot.slot_id}</p>
+                  <p className="text-[10px]">{slot.is_occupied ? 'Occupied' : 'Free'}</p>
+                </div>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>

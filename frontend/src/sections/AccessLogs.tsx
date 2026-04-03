@@ -43,17 +43,33 @@ export default function AccessLogs() {
 
   // Fetch logs
   const fetchLogs = async () => {
-    try {
-      const res = await fetch(
-        `${CONFIG.API_BASE_URL}${CONFIG.ACCESS_LOGS_ENDPOINT}?limit=${CONFIG.LIMIT}`
-      );
+    if (!CONFIG.API_BASE_URL) {
+      console.error('❌ VITE_API_URL is not set!');
+      toast.error('API URL is not configured. Check environment variables.');
+      setLoading(false);
+      return;
+    }
 
-      if (!res.ok) throw new Error();
+    const url = `${CONFIG.API_BASE_URL}${CONFIG.ACCESS_LOGS_ENDPOINT}?limit=${CONFIG.LIMIT}`;
+    console.log('🔍 Fetching logs from:', url);
+
+    try {
+      const res = await fetch(url);
+
+      console.log('📡 Response status:', res.status);
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error('❌ Error response:', errorText);
+        throw new Error(`HTTP ${res.status}`);
+      }
 
       const data = await res.json();
+      console.log('✅ Logs data:', data);
       setLogs(data.logs || []);
-    } catch {
-      toast.error("Failed to fetch logs");
+    } catch (error) {
+      console.error('❌ Failed to fetch logs:', error);
+      toast.error('Failed to fetch logs');
     } finally {
       setLoading(false);
     }

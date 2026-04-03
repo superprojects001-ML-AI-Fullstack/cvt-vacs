@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 
 // Configuration Constants
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const API_BASE_URL = import.meta.env.VITE_API_URL;
 const INPUT_IMAGE_SIZE = 640;           // Standard input size for YOLO
 const MAX_FILE_SIZE_MB = 10;
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp';
@@ -83,20 +83,28 @@ export default function ANPRMonitor() {
     }
 
     if (!API_BASE_URL) {
-      toast.error('API configuration is missing');
+      console.error('❌ VITE_API_URL is not set!');
+      toast.error('API URL is not configured. Check environment variables.');
       return;
     }
 
+    const url = `${API_BASE_URL}/anpr/recognize`;
+    console.log('🔍 Processing ANPR at:', url);
+    console.log('📦 Image length:', selectedImage.length);
+
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/anpr/recognize`, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ image_base64: selectedImage })
       });
 
+      console.log('📡 Response status:', response.status);
+
       if (response.ok) {
         const data: ANPRResult = await response.json();
+        console.log('✅ ANPR result:', data);
         setResult(data);
 
         if (data.success && data.plate_number) {
@@ -105,10 +113,13 @@ export default function ANPRMonitor() {
           toast.warning(data.message || 'Recognition completed with issues');
         }
       } else {
+        const errorText = await response.text();
+        console.error('❌ ANPR error:', errorText);
         const errorData = await response.json().catch(() => ({}));
-        toast.error(errorData.detail || 'ANPR processing failed');
+        toast.error(errorData.detail || `ANPR failed: ${response.status}`);
       }
     } catch (error) {
+      console.error('❌ Network error:', error);
       toast.error('Network error - please try again');
     } finally {
       setLoading(false);
