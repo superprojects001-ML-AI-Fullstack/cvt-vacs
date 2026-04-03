@@ -1,11 +1,14 @@
 """
 Camera Entry Router - Auto ANPR + Token Generation + Parking Allocation
-Updated: Auto-create users and vehicles for new entries
+Updated: Auto-create users and vehicles for new entries, capture plate image
 """
 from fastapi import APIRouter, HTTPException, status, Query
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+from PIL import Image
+from io import BytesIO
+import base64
 
 from app.services.anpr_service import ANPRService
 from app.services.token_service import TokenService
@@ -38,16 +41,11 @@ class ExitRequest(BaseModel):
 # ──────────────────────────────────────────────
 
 async def ensure_user_exists(user_id: str) -> bool:
-    """
-    Check if user exists, create if not
-    Returns True if user exists or was created successfully
-    """
     try:
         existing = await db.get_user_by_id(user_id)
         if existing:
             return True
         
-        # Auto-create user with minimal info
         user_data = {
             "user_id": user_id,
             "email": f"{user_id}@cvt-vacs.auto",
@@ -68,25 +66,18 @@ async def ensure_user_exists(user_id: str) -> bool:
 
 
 async def ensure_vehicle_exists(plate_number: str, color: str = "unknown", user_id: str = "auto_user") -> tuple[bool, Optional[dict]]:
-    """
-    Check if vehicle exists, auto-register if not
-    Returns (success, vehicle_data)
-    """
     try:
-        # Check if vehicle exists
         existing = await db.get_vehicle_by_plate(plate_number)
         if existing:
             return True, existing
         
-        # Ensure user exists first
         user_created = await ensure_user_exists(user_id)
         if not user_created:
             return False, None
         
-        # Auto-register vehicle
         vehicle_data = {
             "plate_number": plate_number,
-            "vehicle_type": "sedan",  # Default
+            "vehicle_type": "sedan",
             "make": "Unknown",
             "model": "Unknown",
             "color": color,
@@ -99,8 +90,6 @@ async def ensure_vehicle_exists(plate_number: str, color: str = "unknown", user_
         
         vehicle_id = await db.create_vehicle(vehicle_data)
         print(f"✅ Auto-registered vehicle: {plate_number} for user: {user_id}")
-        
-        # Return the created vehicle
         created = await db.get_vehicle_by_plate(plate_number)
         return True, created
         
@@ -110,7 +99,32 @@ async def ensure_vehicle_exists(plate_number: str, color: str = "unknown", user_
 
 
 # ──────────────────────────────────────────────
-# Helper - Build entry response (MODIFIED)
+# Helper: crop plate image from original
+# ──────────────────────────────────────────────
+async def crop_plate_image(image_base64: str, bbox: list[int]) -> str:
+    """
+    Crop license plate from base64 image using bounding box.
+    Returns base64 string of cropped plate.
+    """
+    try:
+        header, encoded = image_base64.split(",", 1)
+        image_data = base64.b64decode(encoded)
+        image = Image.open(BytesIO(image_data))
+
+        x1, y1, x2, y2 = bbox
+        cropped = image.crop((x1, y1, x2, y2))
+
+        buffer = BytesIO()
+        cropped.save(buffer, format="JPEG")
+        cropped_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        return f"data:image/jpeg;base64,{cropped_b64}"
+    except Exception as e:
+        print(f"❌ Failed to crop plate image: {e}")
+        return ""
+
+
+# ──────────────────────────────────────────────
+# Helper - Build entry response
 # ──────────────────────────────────────────────
 
 async def _build_entry_response(
@@ -121,11 +135,12 @@ async def _build_entry_response(
     anpr_confidence: Optional[float],
     processing_time_ms: float,
     user_id: str,
+    request_image_base64: Optional[str] = None,
+    bounding_box: Optional[list[int]] = None
 ) -> dict:
 
     plate_number = plate_number.upper().replace(" ", "")
 
-    # 1. Check/Auto-create vehicle (and user) - MODIFIED
     vehicle_exists, vehicle = await ensure_vehicle_exists(plate_number, color, user_id)
     
     if not vehicle_exists or not vehicle:
@@ -142,7 +157,6 @@ async def _build_entry_response(
             "auto_registered": False
         }
 
-    # 2. Token
     resolved_user_id = vehicle.get("user_id", user_id)
 
     token_data = await TokenService.issue_token(
@@ -152,9 +166,7 @@ async def _build_entry_response(
         expiry_hours=24,
     )
 
-    # 3. Parking
     slot = await db.get_available_slot()
-
     if slot:
         await db.occupy_slot(
             slot_id=slot["slot_id"],
@@ -168,13 +180,19 @@ async def _build_entry_response(
         parking_slot = None
         parking_zone = None
 
-    # 4. Logs
+    # Crop plate image if bounding box and original image available
+    cropped_plate_b64 = ""
+    if bounding_box and request_image_base64:
+        cropped_plate_b64 = await crop_plate_image(request_image_base64, bounding_box)
+
     await db.log_camera_entry({
         "plate_number": plate_number,
         "color": color,
         "color_hex": color_hex,
         "color_confidence": color_confidence,
         "anpr_confidence": anpr_confidence,
+        "bounding_box": bounding_box,
+        "plate_image_base64": cropped_plate_b64,
         "token_id": token_data["token_id"],
         "parking_slot": parking_slot,
         "parking_zone": parking_zone,
@@ -197,7 +215,6 @@ async def _build_entry_response(
         "timestamp": datetime.utcnow(),
     })
 
-    # 5. Response - MODIFIED to include auto_registered flag
     return {
         "success": True,
         "registered": True,
@@ -218,6 +235,8 @@ async def _build_entry_response(
         },
         "parking_slot": parking_slot,
         "parking_zone": parking_zone,
+        "bounding_box": bounding_box,
+        "plate_image_base64": cropped_plate_b64,
         "message": (
             f"Entry granted — Slot {parking_slot} (Zone {parking_zone}) allocated."
             if parking_slot
@@ -228,12 +247,11 @@ async def _build_entry_response(
 
 
 # ──────────────────────────────────────────────
-# Endpoints (unchanged)
+# Endpoints
 # ──────────────────────────────────────────────
 
 @router.post("/process", response_model=dict)
 async def process_camera_entry(request: CameraEntryRequest):
-
     if not request.image_base64:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -270,14 +288,14 @@ async def process_camera_entry(request: CameraEntryRequest):
         anpr_confidence=anpr_result.get("confidence"),
         processing_time_ms=anpr_result.get("processing_time_ms", 0),
         user_id=request.user_id or "auto_user",
+        request_image_base64=request.image_base64,
+        bounding_box=anpr_result.get("bounding_box")
     )
 
 
 @router.post("/manual", response_model=dict)
 async def manual_camera_entry(request: ManualEntryRequest):
-
     plate_number = request.plate_number.upper().replace(" ", "")
-
     if len(plate_number) < 5:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -297,9 +315,7 @@ async def manual_camera_entry(request: ManualEntryRequest):
 
 @router.post("/exit", response_model=dict)
 async def process_exit(request: ExitRequest):
-
     plate_number = request.plate_number.upper().replace(" ", "")
-
     released_slot = await db.release_slot(plate_number)
 
     if not released_slot:
@@ -329,24 +345,18 @@ async def process_exit(request: ExitRequest):
 
 @router.get("/slots", response_model=dict)
 async def get_parking_slots():
-
     summary = await db.get_parking_summary()
-
     for slot in summary["slots"]:
         slot.pop("_id", None)
-
     return {"success": True, **summary}
 
 
 @router.get("/slots/available", response_model=dict)
 async def get_available_slots():
-
     all_slots = await db.get_all_slots()
     available = [s for s in all_slots if not s["is_occupied"]]
-
     for s in available:
         s.pop("_id", None)
-
     return {
         "success": True,
         "available": len(available),
@@ -355,52 +365,28 @@ async def get_available_slots():
 
 
 @router.get("/logs", response_model=dict)
-async def get_camera_entry_logs(
-    limit: int = Query(100, ge=1, le=500),
-    skip: int = Query(0, ge=0),
-):
-
+async def get_camera_entry_logs(limit: int = Query(100, ge=1, le=500), skip: int = Query(0, ge=0)):
     logs = await db.get_camera_entry_logs(limit=limit, skip=skip)
-
     for log in logs:
         log["id"] = str(log.pop("_id"))
-
-    return {
-        "success": True,
-        "count": len(logs),
-        "logs": logs,
-    }
+    return {"success": True, "count": len(logs), "logs": logs}
 
 
 @router.get("/logs/{plate_number}", response_model=dict)
-async def get_entry_logs_by_plate(
-    plate_number: str,
-    limit: int = Query(20, ge=1, le=100),
-):
-
+async def get_entry_logs_by_plate(plate_number: str, limit: int = Query(20, ge=1, le=100)):
     plate = plate_number.upper().replace(" ", "")
     logs = await db.get_camera_entry_by_plate(plate, limit=limit)
-
     for log in logs:
         log["id"] = str(log.pop("_id"))
-
-    return {
-        "success": True,
-        "plate_number": plate,
-        "count": len(logs),
-        "logs": logs,
-    }
+    return {"success": True, "plate_number": plate, "count": len(logs), "logs": logs}
 
 
 @router.get("/status", response_model=dict)
 async def get_camera_entry_status():
-
     from app.services.anpr_service import get_yolo_model, get_ocr_reader
-
     summary = await db.get_parking_summary()
     yolo_ready = get_yolo_model() is not None
     ocr_ready = get_ocr_reader() is not None
-
     return {
         "status": "operational" if (yolo_ready and ocr_ready) else "degraded",
         "anpr_ready": yolo_ready and ocr_ready,
