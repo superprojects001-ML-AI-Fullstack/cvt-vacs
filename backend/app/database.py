@@ -19,9 +19,8 @@ class Database:
     # ──────────────────────────────
     # Safety Check
     # ──────────────────────────────
-    @classmethod
-    def check_db(cls):
-        if cls.db is None:
+    def check_db(self):
+        if self.db is None:
             raise Exception("❌ Database not connected. Check MONGODB_URL.")
 
     # ──────────────────────────────
@@ -62,7 +61,9 @@ class Database:
     # ──────────────────────────────
     @classmethod
     async def _create_indexes(cls):
-        cls.check_db()
+        # Temporary check using class for indexing
+        if cls.db is None:
+            raise Exception("❌ Database not connected.")
 
         # Users collection
         await cls.db.users.create_index([("user_id", ASCENDING)], unique=True)
@@ -101,7 +102,9 @@ class Database:
     @classmethod
     async def seed_parking_slots(cls):
         """Initialize default parking slots if none exist"""
-        cls.check_db()
+        if cls.db is None:
+            raise Exception("❌ Database not connected.")
+
         count = await cls.db.parking_slots.count_documents({})
         if count == 0:
             slots = [{"slot_id": f"PS-{i+1}", "is_occupied": False} for i in range(50)]
@@ -123,7 +126,6 @@ class Database:
         cursor = self.db.parking_slots.find().sort("slot_id", ASCENDING)
         slots = await cursor.to_list(length=total)
 
-        # Clean up MongoDB _id field
         for slot in slots:
             slot.pop("_id", None)
 
@@ -133,6 +135,97 @@ class Database:
             "available": available,
             "slots": slots
         }
+
+    async def get_available_slot(self) -> Optional[Dict]:
+        """Get one available parking slot"""
+        self.check_db()
+        slot = await self.db.parking_slots.find_one({"is_occupied": False})
+        if slot:
+            slot.pop("_id", None)
+        return slot
+
+    async def get_all_slots(self) -> List[Dict]:
+        """Get all parking slots"""
+        self.check_db()
+        cursor = self.db.parking_slots.find().sort("slot_id", ASCENDING)
+        slots = await cursor.to_list(length=100)
+        for slot in slots:
+            slot.pop("_id", None)
+        return slots
+
+    async def occupy_slot(self, slot_id: str, plate_number: str, token_id: str, vehicle_color: str = "unknown"):
+        """Mark a slot as occupied"""
+        self.check_db()
+        await self.db.parking_slots.update_one(
+            {"slot_id": slot_id},
+            {
+                "$set": {
+                    "is_occupied": True,
+                    "plate_number": plate_number,
+                    "token_id": token_id,
+                    "vehicle_color": vehicle_color,
+                    "occupied_at": datetime.utcnow()
+                }
+            }
+        )
+
+    async def release_slot(self, plate_number: str) -> Optional[str]:
+        """Release a parking slot by plate number and return the slot_id"""
+        self.check_db()
+        result = await self.db.parking_slots.find_one_and_update(
+            {"plate_number": plate_number, "is_occupied": True},
+            {
+                "$set": {
+                    "is_occupied": False,
+                    "plate_number": None,
+                    "token_id": None,
+                    "vehicle_color": None,
+                    "occupied_at": None
+                }
+            },
+            return_document=True
+        )
+        return result["slot_id"] if result else None
+
+    # ──────────────────────────────
+    # Camera Entry Log Operations
+    # ──────────────────────────────
+    async def log_camera_entry(self, log_data: Dict[str, Any]) -> str:
+        """Log camera entry attempt"""
+        self.check_db()
+        result = await self.db.camera_entry_logs.insert_one(log_data)
+        return str(result.inserted_id)
+
+    async def get_camera_entry_logs(self, limit: int = 100, skip: int = 0) -> List[Dict]:
+        """Get recent camera entry logs"""
+        self.check_db()
+        cursor = (
+            self.db.camera_entry_logs.find()
+            .sort("timestamp", DESCENDING)
+            .skip(skip)
+            .limit(limit)
+        )
+        logs = await cursor.to_list(length=limit)
+
+        for log in logs:
+            if "_id" in log:
+                log["_id"] = str(log["_id"])
+        return logs
+
+    async def get_camera_entry_by_plate(self, plate_number: str, limit: int = 20) -> List[Dict]:
+        """Get camera logs for a specific plate"""
+        self.check_db()
+        cursor = (
+            self.db.camera_entry_logs.find({"plate_number": plate_number})
+            .sort("timestamp", DESCENDING)
+            .limit(limit)
+        )
+        logs = await cursor.to_list(length=limit)
+
+        for log in logs:
+            if "_id" in log:
+                log["_id"] = str(log["_id"])
+        return logs
 
     # ──────────────────────────────
     # User Operations
@@ -220,7 +313,6 @@ class Database:
         )
         logs = await cursor.to_list(length=limit)
 
-        # Clean ObjectId for safe JSON serialization
         for log in logs:
             if "_id" in log:
                 log["_id"] = str(log["_id"])
