@@ -111,73 +111,65 @@ class Database:
             print(f"📌 Parking slots already seeded ({count} slots)")
 
     # ──────────────────────────────
-# Parking Slot Operations
-# ──────────────────────────────
-@classmethod
-async def get_parking_summary(cls) -> Dict[str, Any]:
-    cls.check_db()
-    
-    total = await cls.db.parking_slots.count_documents({})
-    occupied = await cls.db.parking_slots.count_documents({"is_occupied": True})
-    available = total - occupied
+    # Parking Slot Operations
+    # ──────────────────────────────
+    async def get_parking_summary(self) -> Dict[str, Any]:
+        self.check_db()
+        
+        total = await self.db.parking_slots.count_documents({})
+        occupied = await self.db.parking_slots.count_documents({"is_occupied": True})
+        available = total - occupied
 
-    cursor = cls.db.parking_slots.find().sort("slot_id", ASCENDING)
-    slots = await cursor.to_list(length=total)
+        cursor = self.db.parking_slots.find().sort("slot_id", ASCENDING)
+        slots = await cursor.to_list(length=total)
 
-    # Clean up MongoDB _id field
-    for slot in slots:
-        slot.pop("_id", None)
+        # Clean up MongoDB _id field
+        for slot in slots:
+            slot.pop("_id", None)
 
-    return {
-        "total": total,
-        "occupied": occupied,
-        "available": available,
-        "slots": slots
-    }
+        return {
+            "total": total,
+            "occupied": occupied,
+            "available": available,
+            "slots": slots
+        }
 
     # ──────────────────────────────
     # User Operations
     # ──────────────────────────────
-    @classmethod
-    async def create_user(cls, user_data: Dict[str, Any]) -> str:
-        cls.check_db()
-        result = await cls.db.users.insert_one(user_data)
+    async def create_user(self, user_data: Dict[str, Any]) -> str:
+        self.check_db()
+        result = await self.db.users.insert_one(user_data)
         return str(result.inserted_id)
 
-    @classmethod
-    async def get_user_by_id(cls, user_id: str) -> Optional[Dict]:
-        cls.check_db()
-        return await cls.db.users.find_one({"user_id": user_id})
+    async def get_user_by_id(self, user_id: str) -> Optional[Dict]:
+        self.check_db()
+        return await self.db.users.find_one({"user_id": user_id})
 
-    @classmethod
-    async def get_user_by_email(cls, email: str) -> Optional[Dict]:
-        cls.check_db()
-        return await cls.db.users.find_one({"email": email})
+    async def get_user_by_email(self, email: str) -> Optional[Dict]:
+        self.check_db()
+        return await self.db.users.find_one({"email": email})
 
     # ──────────────────────────────
     # Vehicle Operations
     # ──────────────────────────────
-    @classmethod
-    async def create_vehicle(cls, vehicle_data: Dict[str, Any]) -> str:
-        cls.check_db()
-        result = await cls.db.vehicles.insert_one(vehicle_data)
+    async def create_vehicle(self, vehicle_data: Dict[str, Any]) -> str:
+        self.check_db()
+        result = await self.db.vehicles.insert_one(vehicle_data)
         return str(result.inserted_id)
 
-    @classmethod
-    async def get_vehicle_by_plate(cls, plate_number: str) -> Optional[Dict]:
-        cls.check_db()
-        return await cls.db.vehicles.find_one({"plate_number": plate_number})
+    async def get_vehicle_by_plate(self, plate_number: str) -> Optional[Dict]:
+        self.check_db()
+        return await self.db.vehicles.find_one({"plate_number": plate_number})
 
-    @classmethod
-    async def get_vehicles_by_user(cls, user_id: str) -> List[Dict]:
-        cls.check_db()
-        cursor = cls.db.vehicles.find({"user_id": user_id})
+    async def get_vehicles_by_user(self, user_id: str) -> List[Dict]:
+        self.check_db()
+        cursor = self.db.vehicles.find({"user_id": user_id})
         return await cursor.to_list(length=100)
 
-    @classmethod
-    async def update_vehicle_status(cls, plate_number: str, status: str):
-        cls.check_db()
-        await cls.db.vehicles.update_one(
+    async def update_vehicle_status(self, plate_number: str, status: str):
+        self.check_db()
+        await self.db.vehicles.update_one(
             {"plate_number": plate_number},
             {"$set": {"status": status, "updated_at": datetime.utcnow()}}
         )
@@ -185,29 +177,25 @@ async def get_parking_summary(cls) -> Dict[str, Any]:
     # ──────────────────────────────
     # Token Operations
     # ──────────────────────────────
-    @classmethod
-    async def create_token(cls, token_data: Dict[str, Any]) -> str:
-        cls.check_db()
-        result = await cls.db.tokens.insert_one(token_data)
+    async def create_token(self, token_data: Dict[str, Any]) -> str:
+        self.check_db()
+        result = await self.db.tokens.insert_one(token_data)
         return str(result.inserted_id)
 
-    @classmethod
-    async def get_token_by_id(cls, token_id: str) -> Optional[Dict]:
-        cls.check_db()
-        return await cls.db.tokens.find_one({"token_id": token_id})
+    async def get_token_by_id(self, token_id: str) -> Optional[Dict]:
+        self.check_db()
+        return await self.db.tokens.find_one({"token_id": token_id})
 
-    @classmethod
-    async def revoke_token(cls, token_id: str):
-        cls.check_db()
-        await cls.db.tokens.update_one(
+    async def revoke_token(self, token_id: str):
+        self.check_db()
+        await self.db.tokens.update_one(
             {"token_id": token_id},
             {"$set": {"is_revoked": True, "revoked_at": datetime.utcnow()}}
         )
 
-    @classmethod
-    async def get_active_tokens_by_plate(cls, plate_number: str) -> List[Dict]:
-        cls.check_db()
-        cursor = cls.db.tokens.find({
+    async def get_active_tokens_by_plate(self, plate_number: str) -> List[Dict]:
+        self.check_db()
+        cursor = self.db.tokens.find({
             "plate_number": plate_number,
             "is_revoked": False,
             "expiry_time": {"$gt": datetime.utcnow()}
@@ -217,61 +205,76 @@ async def get_parking_summary(cls) -> Dict[str, Any]:
     # ──────────────────────────────
     # Access Log Operations
     # ──────────────────────────────
-    @classmethod
-    async def log_access_attempt(cls, log_data: Dict[str, Any]) -> str:
-        cls.check_db()
-        result = await cls.db.access_logs.insert_one(log_data)
+    async def log_access_attempt(self, log_data: Dict[str, Any]) -> str:
+        self.check_db()
+        result = await self.db.access_logs.insert_one(log_data)
         return str(result.inserted_id)
 
-    @classmethod
-    async def get_access_logs(cls, limit: int = 100, skip: int = 0) -> List[Dict]:
-        cls.check_db()
+    async def get_access_logs(self, limit: int = 100, skip: int = 0) -> List[Dict]:
+        self.check_db()
         cursor = (
-            cls.db.access_logs.find()
+            self.db.access_logs.find()
             .sort("timestamp", DESCENDING)
             .skip(skip)
             .limit(limit)
         )
-        return await cursor.to_list(length=limit)
+        logs = await cursor.to_list(length=limit)
 
-    @classmethod
-    async def get_logs_by_plate(cls, plate_number: str, limit: int = 50) -> List[Dict]:
-        cls.check_db()
+        # Clean ObjectId for safe JSON serialization
+        for log in logs:
+            if "_id" in log:
+                log["_id"] = str(log["_id"])
+
+        return logs
+
+    async def get_logs_by_plate(self, plate_number: str, limit: int = 50) -> List[Dict]:
+        self.check_db()
         cursor = (
-            cls.db.access_logs.find({"plate_number": plate_number})
+            self.db.access_logs.find({"plate_number": plate_number})
             .sort("timestamp", DESCENDING)
             .limit(limit)
         )
-        return await cursor.to_list(length=limit)
+        logs = await cursor.to_list(length=limit)
 
-    @classmethod
-    async def get_logs_by_date_range(cls, start: datetime, end: datetime) -> List[Dict]:
-        cls.check_db()
-        cursor = cls.db.access_logs.find(
+        for log in logs:
+            if "_id" in log:
+                log["_id"] = str(log["_id"])
+
+        return logs
+
+    async def get_logs_by_date_range(self, start: datetime, end: datetime) -> List[Dict]:
+        self.check_db()
+        cursor = self.db.access_logs.find(
             {"timestamp": {"$gte": start, "$lte": end}}
         ).sort("timestamp", DESCENDING)
-        return await cursor.to_list(length=1000)
+        
+        logs = await cursor.to_list(length=1000)
 
-    @classmethod
-    async def get_statistics(cls) -> Dict[str, Any]:
-        cls.check_db()
+        for log in logs:
+            if "_id" in log:
+                log["_id"] = str(log["_id"])
 
-        total_users       = await cls.db.users.count_documents({})
-        total_vehicles    = await cls.db.vehicles.count_documents({})
-        total_tokens      = await cls.db.tokens.count_documents({})
-        total_access_logs = await cls.db.access_logs.count_documents({})
+        return logs
+
+    async def get_statistics(self) -> Dict[str, Any]:
+        self.check_db()
+
+        total_users       = await self.db.users.count_documents({})
+        total_vehicles    = await self.db.vehicles.count_documents({})
+        total_tokens      = await self.db.tokens.count_documents({})
+        total_access_logs = await self.db.access_logs.count_documents({})
 
         today_start = datetime.utcnow().replace(
             hour=0, minute=0, second=0, microsecond=0
         )
 
-        today_attempts = await cls.db.access_logs.count_documents(
+        today_attempts = await self.db.access_logs.count_documents(
             {"timestamp": {"$gte": today_start}}
         )
-        today_granted = await cls.db.access_logs.count_documents(
+        today_granted = await self.db.access_logs.count_documents(
             {"timestamp": {"$gte": today_start}, "access_decision": "GRANTED"}
         )
-        today_denied = await cls.db.access_logs.count_documents(
+        today_denied = await self.db.access_logs.count_documents(
             {"timestamp": {"$gte": today_start}, "access_decision": "DENIED"}
         )
 
