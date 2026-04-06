@@ -10,27 +10,25 @@ from app.database import db
 
 router = APIRouter(tags=["Vehicles"])
 
+# 🔹 Updated plate regex to match ANPR normalization
+PLATE_REGEX = r"^[A-Z]{3}-\d{3}-[A-Z0-9]{2,3}$"
 
-# 🔹 Plate regex (Nigerian format: ABC-123-XY)
-PLATE_REGEX = r"^[A-Z]{3}-\d{3}-[A-Z]{2}$"
-
-
-# 🔹 Normalize plate
+# 🔹 Robust plate normalization
 def normalize_plate(plate: str):
-    plate = plate.upper().replace(" ", "").replace("-", "")
-
-    if len(plate) != 8:
+    if not plate:
         return None
-
+    plate = plate.upper().replace(" ", "").replace("-", "")
+    if len(plate) < 7 or len(plate) > 8:
+        return None
+    if len(plate) == 7:
+        return f"{plate[:3]}-{plate[3:6]}-{plate[6:]}"
     return f"{plate[:3]}-{plate[3:6]}-{plate[6:]}"
 
 
 @router.post("/register", response_model=dict, status_code=http_status.HTTP_201_CREATED)
 async def register_vehicle(vehicle: VehicleCreate):
-
-    # ✅ Normalize
+    # ✅ Normalize plate
     plate_number = normalize_plate(vehicle.plate_number)
-
     if not plate_number:
         raise HTTPException(
             status_code=400,
@@ -44,16 +42,12 @@ async def register_vehicle(vehicle: VehicleCreate):
             detail="Invalid plate format. Expected format: ABC-123-XY"
         )
 
-    # 🔥 ✅ CRITICAL: Check if plate exists in ANPR logs
-    detected_plate = await db.db.anpr_logs.find_one({
-        "plate_number": plate_number
-    })
-
+    # 🔥 Optional: Check if plate exists in ANPR logs
+    detected_plate = await db.db.anpr_logs.find_one({"plate_number": plate_number})
     if not detected_plate:
-        raise HTTPException(
-            status_code=400,
-            detail="Plate not found in ANPR detection records"
-        )
+        print(f"[WARN] Plate {plate_number} not found in ANPR detection records")
+        # ❌ Uncomment below to strictly block registration if not in ANPR
+        # raise HTTPException(status_code=400, detail="Plate not found in ANPR detection records")
 
     # ✅ Check duplicate
     existing = await db.get_vehicle_by_plate(plate_number)
@@ -63,27 +57,18 @@ async def register_vehicle(vehicle: VehicleCreate):
             detail=f"Vehicle with plate {plate_number} already registered"
         )
 
-    # ✅ HANDLE USER (Auto-create if not exists)
+    # ✅ Handle user (auto-create if not exists)
     user_id = vehicle.user_id
-
     if user_id:
         user = await db.get_user_by_id(user_id)
-
         if not user:
-            user_data = {
-                "user_id": user_id,
-                "created_at": datetime.utcnow()
-            }
+            user_data = {"user_id": user_id, "created_at": datetime.utcnow()}
             await db.db.users.insert_one(user_data)
     else:
         user_id = f"user_{plate_number}"
-
         user = await db.get_user_by_id(user_id)
         if not user:
-            user_data = {
-                "user_id": user_id,
-                "created_at": datetime.utcnow()
-            }
+            user_data = {"user_id": user_id, "created_at": datetime.utcnow()}
             await db.db.users.insert_one(user_data)
 
     # ✅ Create vehicle
@@ -113,15 +98,10 @@ async def register_vehicle(vehicle: VehicleCreate):
 @router.get("/plate/{plate_number}", response_model=dict)
 async def get_vehicle_by_plate(plate_number: str):
     plate_number = normalize_plate(plate_number)
-
     if not plate_number:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid plate format"
-        )
+        raise HTTPException(status_code=400, detail="Invalid plate format")
 
     vehicle = await db.get_vehicle_by_plate(plate_number)
-
     if not vehicle:
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND,
@@ -131,64 +111,41 @@ async def get_vehicle_by_plate(plate_number: str):
     if "_id" in vehicle:
         vehicle["id"] = str(vehicle.pop("_id"))
 
-    return {
-        "success": True,
-        "vehicle": vehicle
-    }
+    return {"success": True, "vehicle": vehicle}
 
 
 @router.get("/user/{user_id}", response_model=dict)
 async def get_user_vehicles(user_id: str):
     vehicles = await db.get_vehicles_by_user(user_id)
-
     for v in vehicles:
         if "_id" in v:
             v["id"] = str(v.pop("_id"))
 
-    return {
-        "success": True,
-        "count": len(vehicles),
-        "vehicles": vehicles
-    }
+    return {"success": True, "count": len(vehicles), "vehicles": vehicles}
 
 
 @router.get("/all", response_model=dict)
 async def get_all_vehicles(limit: int = 100, skip: int = 0):
-
     if db.db is None:
-        raise HTTPException(
-            status_code=500,
-            detail="Database not connected"
-        )
+        raise HTTPException(status_code=500, detail="Database not connected")
 
     cursor = db.db.vehicles.find().skip(skip).limit(limit)
     vehicles = await cursor.to_list(length=limit)
-
     for v in vehicles:
         if "_id" in v:
             v["id"] = str(v.pop("_id"))
 
-    return {
-        "success": True,
-        "count": len(vehicles),
-        "vehicles": vehicles
-    }
+    return {"success": True, "count": len(vehicles), "vehicles": vehicles}
 
 
 @router.patch("/status/{plate_number}", response_model=dict)
 async def update_vehicle_status(plate_number: str, status: str):
-
     plate_number = normalize_plate(plate_number)
     status = status.lower()
-
     if not plate_number:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid plate format"
-        )
+        raise HTTPException(status_code=400, detail="Invalid plate format")
 
     valid_statuses = ["active", "inactive", "banned", "suspended"]
-
     if status not in valid_statuses:
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
@@ -196,7 +153,6 @@ async def update_vehicle_status(plate_number: str, status: str):
         )
 
     vehicle = await db.get_vehicle_by_plate(plate_number)
-
     if not vehicle:
         raise HTTPException(
             status_code=http_status.HTTP_404_NOT_FOUND,
