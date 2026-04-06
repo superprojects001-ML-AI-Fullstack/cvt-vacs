@@ -1,8 +1,9 @@
 """
-Vehicle Management API Routes
+Vehicle Management API Routes (FIXED & SECURE)
 """
 from fastapi import APIRouter, HTTPException, status as http_status
 from datetime import datetime
+import re
 
 from app.models.schemas import VehicleCreate
 from app.database import db
@@ -10,12 +11,51 @@ from app.database import db
 router = APIRouter(tags=["Vehicles"])
 
 
+# 🔹 Plate regex (Nigerian format: ABC-123-XY)
+PLATE_REGEX = r"^[A-Z]{3}-\d{3}-[A-Z]{2}$"
+
+
+# 🔹 Normalize plate
+def normalize_plate(plate: str):
+    plate = plate.upper().replace(" ", "").replace("-", "")
+
+    if len(plate) != 8:
+        return None
+
+    return f"{plate[:3]}-{plate[3:6]}-{plate[6:]}"
+
+
 @router.post("/register", response_model=dict, status_code=http_status.HTTP_201_CREATED)
 async def register_vehicle(vehicle: VehicleCreate):
-    # Normalize plate early
-    plate_number = vehicle.plate_number.upper().replace(" ", "")
 
-    # Check if vehicle already exists
+    # ✅ Normalize
+    plate_number = normalize_plate(vehicle.plate_number)
+
+    if not plate_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid plate format length"
+        )
+
+    # ✅ Validate format
+    if not re.match(PLATE_REGEX, plate_number):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid plate format. Expected format: ABC-123-XY"
+        )
+
+    # 🔥 ✅ CRITICAL: Check if plate exists in ANPR logs
+    detected_plate = await db.db.anpr_logs.find_one({
+        "plate_number": plate_number
+    })
+
+    if not detected_plate:
+        raise HTTPException(
+            status_code=400,
+            detail="Plate not found in ANPR detection records"
+        )
+
+    # ✅ Check duplicate
     existing = await db.get_vehicle_by_plate(plate_number)
     if existing:
         raise HTTPException(
@@ -30,14 +70,12 @@ async def register_vehicle(vehicle: VehicleCreate):
         user = await db.get_user_by_id(user_id)
 
         if not user:
-            # Auto-create user
             user_data = {
                 "user_id": user_id,
                 "created_at": datetime.utcnow()
             }
             await db.db.users.insert_one(user_data)
     else:
-        # Optional: generate a default user_id if none provided
         user_id = f"user_{plate_number}"
 
         user = await db.get_user_by_id(user_id)
@@ -48,7 +86,7 @@ async def register_vehicle(vehicle: VehicleCreate):
             }
             await db.db.users.insert_one(user_data)
 
-    # Create vehicle
+    # ✅ Create vehicle
     vehicle_data = {
         "plate_number": plate_number,
         "vehicle_type": vehicle.vehicle_type,
@@ -74,7 +112,13 @@ async def register_vehicle(vehicle: VehicleCreate):
 
 @router.get("/plate/{plate_number}", response_model=dict)
 async def get_vehicle_by_plate(plate_number: str):
-    plate_number = plate_number.upper().replace(" ", "")
+    plate_number = normalize_plate(plate_number)
+
+    if not plate_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid plate format"
+        )
 
     vehicle = await db.get_vehicle_by_plate(plate_number)
 
@@ -110,9 +154,6 @@ async def get_user_vehicles(user_id: str):
 
 @router.get("/all", response_model=dict)
 async def get_all_vehicles(limit: int = 100, skip: int = 0):
-    """
-    Get all registered vehicles (with pagination)
-    """
 
     if db.db is None:
         raise HTTPException(
@@ -136,12 +177,15 @@ async def get_all_vehicles(limit: int = 100, skip: int = 0):
 
 @router.patch("/status/{plate_number}", response_model=dict)
 async def update_vehicle_status(plate_number: str, status: str):
-    """
-    Update vehicle access status (active/inactive/banned)
-    """
 
-    plate_number = plate_number.upper().replace(" ", "")
+    plate_number = normalize_plate(plate_number)
     status = status.lower()
+
+    if not plate_number:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid plate format"
+        )
 
     valid_statuses = ["active", "inactive", "banned", "suspended"]
 

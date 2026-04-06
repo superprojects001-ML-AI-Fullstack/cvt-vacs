@@ -1,21 +1,35 @@
 """
-ANPR API Routes - Automatic Number Plate Recognition
+ANPR API Routes - Automatic Number Plate Recognition (CONNECTED VERSION)
 """
 from fastapi import APIRouter, HTTPException, status, File, UploadFile
 import base64
+from datetime import datetime
+import re
 
 from app.models.schemas import ANPRRequest
 from app.services.anpr_service import ANPRService
+from app.database import db
 
-# ❗ FIX: REMOVE prefix
 router = APIRouter(tags=["ANPR"])
+
+
+# 🔹 SAME normalization as vehicles (VERY IMPORTANT)
+def normalize_plate(plate: str):
+    plate = plate.upper().replace(" ", "").replace("-", "")
+
+    if len(plate) != 8:
+        return None
+
+    return f"{plate[:3]}-{plate[3:6]}-{plate[6:]}"
+
+
+# 🔹 Optional validation
+PLATE_REGEX = r"^[A-Z]{3}-\d{3}-[A-Z]{2}$"
 
 
 @router.post("/recognize", response_model=dict)
 async def recognize_plate(request: ANPRRequest):
-    """
-    Recognize license plate from base64 image
-    """
+
     if not request.image_base64:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -25,9 +39,32 @@ async def recognize_plate(request: ANPRRequest):
     try:
         result = await ANPRService.process_image(request.image_base64)
 
+        plate_number = result.get("plate_number")
+
+        # 🔥 ✅ CONNECT SYSTEM HERE
+        if result["success"] and plate_number:
+
+            normalized_plate = normalize_plate(plate_number)
+
+            if normalized_plate and re.match(PLATE_REGEX, normalized_plate):
+
+                # ✅ Save to ANPR logs
+                await db.db.anpr_logs.insert_one({
+                    "plate_number": normalized_plate,
+                    "confidence": result.get("confidence"),
+                    "detected_at": datetime.utcnow(),
+                    "source": "camera",
+                    "raw_text": plate_number
+                })
+
+                plate_number = normalized_plate
+            else:
+                # ❌ Invalid format after OCR
+                plate_number = None
+
         return {
             "success": result["success"],
-            "plate_number": result.get("plate_number"),
+            "plate_number": plate_number,
             "confidence": result.get("confidence"),
             "message": result.get("message"),
             "processing_time_ms": result.get("processing_time_ms"),
@@ -43,9 +80,7 @@ async def recognize_plate(request: ANPRRequest):
 
 @router.post("/recognize-file", response_model=dict)
 async def recognize_plate_from_file(file: UploadFile = File(...)):
-    """
-    Recognize license plate from uploaded image file
-    """
+
     try:
         contents = await file.read()
 
@@ -54,9 +89,30 @@ async def recognize_plate_from_file(file: UploadFile = File(...)):
 
         result = await ANPRService.process_image(image_base64)
 
+        plate_number = result.get("plate_number")
+
+        # 🔥 ✅ CONNECT SYSTEM HERE
+        if result["success"] and plate_number:
+
+            normalized_plate = normalize_plate(plate_number)
+
+            if normalized_plate and re.match(PLATE_REGEX, normalized_plate):
+
+                await db.db.anpr_logs.insert_one({
+                    "plate_number": normalized_plate,
+                    "confidence": result.get("confidence"),
+                    "detected_at": datetime.utcnow(),
+                    "source": file.filename,
+                    "raw_text": plate_number
+                })
+
+                plate_number = normalized_plate
+            else:
+                plate_number = None
+
         return {
             "success": result["success"],
-            "plate_number": result.get("plate_number"),
+            "plate_number": plate_number,
             "confidence": result.get("confidence"),
             "message": result.get("message"),
             "processing_time_ms": result.get("processing_time_ms"),
@@ -71,28 +127,26 @@ async def recognize_plate_from_file(file: UploadFile = File(...)):
         )
 
 
-@router.post("/validate", response_model=dict)
-async def validate_plate_format(plate_number: str):
-    """
-    Validate license plate format
-    """
-    plate_number = plate_number.upper().replace(" ", "")
+# 🔥 NEW: Get detected plates (FOR FRONTEND)
+@router.get("/detections", response_model=dict)
+async def get_detected_plates(limit: int = 20):
 
-    is_valid, cleaned = ANPRService.validate_plate_format(plate_number)
+    cursor = db.db.anpr_logs.find().sort("detected_at", -1).limit(limit)
+    logs = await cursor.to_list(length=limit)
+
+    for log in logs:
+        log["id"] = str(log.pop("_id"))
 
     return {
-        "valid": is_valid,
-        "original": plate_number,
-        "cleaned": cleaned,
-        "message": "Valid plate format" if is_valid else "Invalid plate format"
+        "success": True,
+        "count": len(logs),
+        "detections": logs
     }
 
 
 @router.get("/status", response_model=dict)
 async def get_anpr_status():
-    """
-    Get ANPR service status
-    """
+
     from app.services.anpr_service import get_yolo_model, get_ocr_reader
 
     yolo_loaded = get_yolo_model() is not None
