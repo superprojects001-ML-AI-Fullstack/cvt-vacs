@@ -1,5 +1,5 @@
 """
-Vehicle Management API Routes (FIXED & SECURE)
+Vehicle Management API Routes (CLEANED - NO EMAIL DEPENDENCY)
 """
 from fastapi import APIRouter, HTTPException, status as http_status
 from datetime import datetime
@@ -20,8 +20,6 @@ def normalize_plate(plate: str):
     plate = plate.upper().replace(" ", "").replace("-", "")
     if len(plate) < 7 or len(plate) > 8:
         return None
-    if len(plate) == 7:
-        return f"{plate[:3]}-{plate[3:6]}-{plate[6:]}"
     return f"{plate[:3]}-{plate[3:6]}-{plate[6:]}"
 
 
@@ -42,14 +40,14 @@ async def register_vehicle(vehicle: VehicleCreate):
             detail="Invalid plate format. Expected format: ABC-123-XY"
         )
 
-    # 🔥 Optional: Check if plate exists in ANPR logs
+    # 🔹 Optional: Check if plate exists in ANPR logs
     detected_plate = await db.db.anpr_logs.find_one({"plate_number": plate_number})
     if not detected_plate:
         print(f"[WARN] Plate {plate_number} not found in ANPR detection records")
-        # ❌ Uncomment below to strictly block registration if not in ANPR
+        # Optional strict enforcement:
         # raise HTTPException(status_code=400, detail="Plate not found in ANPR detection records")
 
-    # ✅ Check duplicate
+    # ✅ Check duplicate vehicle
     existing = await db.get_vehicle_by_plate(plate_number)
     if existing:
         raise HTTPException(
@@ -57,19 +55,20 @@ async def register_vehicle(vehicle: VehicleCreate):
             detail=f"Vehicle with plate {plate_number} already registered"
         )
 
-    # ✅ Handle user (auto-create if not exists)
-    user_id = vehicle.user_id
-    if user_id:
-        user = await db.get_user_by_id(user_id)
-        if not user:
-            user_data = {"user_id": user_id, "created_at": datetime.utcnow()}
-            await db.db.users.insert_one(user_data)
-    else:
-        user_id = f"user_{plate_number}"
-        user = await db.get_user_by_id(user_id)
-        if not user:
-            user_data = {"user_id": user_id, "created_at": datetime.utcnow()}
-            await db.db.users.insert_one(user_data)
+    # ✅ Handle user (NO EMAIL INVOLVED)
+    user_id = vehicle.user_id or f"user_{plate_number}"
+
+    user = await db.get_user_by_id(user_id)
+    if not user:
+        user_data = {
+            "user_id": user_id,
+            "created_at": datetime.utcnow()
+        }
+
+        # 🔥 SAFETY: Ensure no email field is present
+        user_data.pop("email", None)
+
+        await db.db.users.insert_one(user_data)
 
     # ✅ Create vehicle
     vehicle_data = {
@@ -117,11 +116,16 @@ async def get_vehicle_by_plate(plate_number: str):
 @router.get("/user/{user_id}", response_model=dict)
 async def get_user_vehicles(user_id: str):
     vehicles = await db.get_vehicles_by_user(user_id)
+
     for v in vehicles:
         if "_id" in v:
             v["id"] = str(v.pop("_id"))
 
-    return {"success": True, "count": len(vehicles), "vehicles": vehicles}
+    return {
+        "success": True,
+        "count": len(vehicles),
+        "vehicles": vehicles
+    }
 
 
 @router.get("/all", response_model=dict)
@@ -131,17 +135,23 @@ async def get_all_vehicles(limit: int = 100, skip: int = 0):
 
     cursor = db.db.vehicles.find().skip(skip).limit(limit)
     vehicles = await cursor.to_list(length=limit)
+
     for v in vehicles:
         if "_id" in v:
             v["id"] = str(v.pop("_id"))
 
-    return {"success": True, "count": len(vehicles), "vehicles": vehicles}
+    return {
+        "success": True,
+        "count": len(vehicles),
+        "vehicles": vehicles
+    }
 
 
 @router.patch("/status/{plate_number}", response_model=dict)
 async def update_vehicle_status(plate_number: str, status: str):
     plate_number = normalize_plate(plate_number)
     status = status.lower()
+
     if not plate_number:
         raise HTTPException(status_code=400, detail="Invalid plate format")
 
