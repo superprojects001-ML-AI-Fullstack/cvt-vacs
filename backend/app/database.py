@@ -1,9 +1,10 @@
 """
 MongoDB Database Connection and Operations (Async Motor)
-Updated: Fixed unique indexes, parking slot management, camera entry support, and seed data
+Updated: Fixed unique indexes with automatic conflict resolution
 """
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING
+from pymongo.errors import OperationFailure
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -57,6 +58,50 @@ class Database:
             print("🔌 Disconnected from MongoDB")
 
     # ──────────────────────────────
+    # Safe Index Creation Helper
+    # ──────────────────────────────
+    @classmethod
+    async def _safe_create_index(cls, collection, keys, **kwargs):
+        """
+        Safely create an index, automatically handling conflicts by dropping 
+        and recreating if the index exists with different specifications.
+        """
+        try:
+            await collection.create_index(keys, **kwargs)
+        except OperationFailure as e:
+            error_msg = str(e).lower()
+            # Check for index name conflict or key spec conflict
+            if any(phrase in error_msg for phrase in [
+                "indexkeyspecsconflict", 
+                "same name as the requested index",
+                "already exists with different options"
+            ]):
+                # Generate the index name that MongoDB would use
+                if isinstance(keys, list):
+                    name_parts = []
+                    for field, direction in keys:
+                        suffix = "1" if direction == ASCENDING else "-1"
+                        name_parts.append(f"{field}_{suffix}")
+                    index_name = "_".join(name_parts)
+                else:
+                    index_name = f"{keys}_1"
+                
+                # Use provided name if available
+                index_name = kwargs.get("name", index_name)
+                
+                print(f"⚠️ Index conflict detected for '{index_name}' in '{collection.name}', fixing...")
+                try:
+                    await collection.drop_index(index_name)
+                    await collection.create_index(keys, **kwargs)
+                    print(f"✅ Index '{index_name}' recreated successfully")
+                except Exception as drop_err:
+                    print(f"⚠️ Could not fix index '{index_name}': {drop_err}")
+                    # Don't raise - let the app continue with existing index
+            else:
+                # Re-raise if it's a different error
+                raise e
+
+    # ──────────────────────────────
     # Indexes
     # ──────────────────────────────
     @classmethod
@@ -65,37 +110,38 @@ class Database:
             raise Exception("❌ Database not connected.")
 
         # Users collection
-        await cls.db.users.create_index([("user_id", ASCENDING)], unique=True)
-        await cls.db.users.create_index(
+        await cls._safe_create_index(cls.db.users, [("user_id", ASCENDING)], unique=True)
+        await cls._safe_create_index(
+            cls.db.users, 
             [("email", ASCENDING)],
             unique=True,
-            partialFilterExpression={"email": {"$exists": True}}  # FIXED: Removed $ne
+            partialFilterExpression={"email": {"$exists": True}}
         )
 
         # Vehicles collection
-        await cls.db.vehicles.create_index([("plate_number", ASCENDING)], unique=True)
-        await cls.db.vehicles.create_index([("user_id", ASCENDING)])
+        await cls._safe_create_index(cls.db.vehicles, [("plate_number", ASCENDING)], unique=True)
+        await cls._safe_create_index(cls.db.vehicles, [("user_id", ASCENDING)])
 
         # Tokens collection
-        await cls.db.tokens.create_index([("token_id", ASCENDING)], unique=True)
-        await cls.db.tokens.create_index([("plate_number", ASCENDING)])
-        await cls.db.tokens.create_index([("expiry_time", ASCENDING)], expireAfterSeconds=0)
+        await cls._safe_create_index(cls.db.tokens, [("token_id", ASCENDING)], unique=True)
+        await cls._safe_create_index(cls.db.tokens, [("plate_number", ASCENDING)])
+        await cls._safe_create_index(cls.db.tokens, [("expiry_time", ASCENDING)], expireAfterSeconds=0)
 
         # Access Logs collection
-        await cls.db.access_logs.create_index([("timestamp", DESCENDING)])
-        await cls.db.access_logs.create_index([("plate_number", ASCENDING)])
-        await cls.db.access_logs.create_index([("token_id", ASCENDING)])
+        await cls._safe_create_index(cls.db.access_logs, [("timestamp", DESCENDING)])
+        await cls._safe_create_index(cls.db.access_logs, [("plate_number", ASCENDING)])
+        await cls._safe_create_index(cls.db.access_logs, [("token_id", ASCENDING)])
 
         # Parking slots collection
-        await cls.db.parking_slots.create_index([("slot_id", ASCENDING)], unique=True)
-        await cls.db.parking_slots.create_index([("is_occupied", ASCENDING)])
-        await cls.db.parking_slots.create_index([("plate_number", ASCENDING)])
+        await cls._safe_create_index(cls.db.parking_slots, [("slot_id", ASCENDING)], unique=True)
+        await cls._safe_create_index(cls.db.parking_slots, [("is_occupied", ASCENDING)])
+        await cls._safe_create_index(cls.db.parking_slots, [("plate_number", ASCENDING)])
 
         # Camera entry logs collection
-        await cls.db.camera_entry_logs.create_index([("timestamp", DESCENDING)])
-        await cls.db.camera_entry_logs.create_index([("plate_number", ASCENDING)])
+        await cls._safe_create_index(cls.db.camera_entry_logs, [("timestamp", DESCENDING)])
+        await cls._safe_create_index(cls.db.camera_entry_logs, [("plate_number", ASCENDING)])
 
-        print("📊 Database indexes created")
+        print("📊 Database indexes created/verified")
 
     # ──────────────────────────────
     # Seed Parking Slots
