@@ -1,6 +1,6 @@
 """
 MongoDB Database Connection and Operations (Async Motor)
-Updated: Added parking slot management, camera entry support, and seed data
+Updated: Fixed unique indexes and added parking slot management, camera entry support, and seed data
 """
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING
@@ -61,13 +61,19 @@ class Database:
     # ──────────────────────────────
     @classmethod
     async def _create_indexes(cls):
-        # Temporary check using class for indexing
         if cls.db is None:
             raise Exception("❌ Database not connected.")
 
         # Users collection
-        await cls.db.users.create_index([("user_id", ASCENDING)], unique=True)
-        await cls.db.users.create_index([("email", ASCENDING)], unique=True)
+        await cls.db.users.create_index(
+            [("user_id", ASCENDING)], unique=True
+        )
+        # Partial unique index to ignore null emails
+        await cls.db.users.create_index(
+            [("email", ASCENDING)],
+            unique=True,
+            partialFilterExpression={"email": {"$exists": True, "$ne": None}}
+        )
 
         # Vehicles collection
         await cls.db.vehicles.create_index([("plate_number", ASCENDING)], unique=True)
@@ -118,14 +124,13 @@ class Database:
     # ──────────────────────────────
     async def get_parking_summary(self) -> Dict[str, Any]:
         self.check_db()
-        
+
         total = await self.db.parking_slots.count_documents({})
         occupied = await self.db.parking_slots.count_documents({"is_occupied": True})
         available = total - occupied
 
         cursor = self.db.parking_slots.find().sort("slot_id", ASCENDING)
         slots = await cursor.to_list(length=total)
-
         for slot in slots:
             slot.pop("_id", None)
 
@@ -137,7 +142,6 @@ class Database:
         }
 
     async def get_available_slot(self) -> Optional[Dict]:
-        """Get one available parking slot"""
         self.check_db()
         slot = await self.db.parking_slots.find_one({"is_occupied": False})
         if slot:
@@ -145,7 +149,6 @@ class Database:
         return slot
 
     async def get_all_slots(self) -> List[Dict]:
-        """Get all parking slots"""
         self.check_db()
         cursor = self.db.parking_slots.find().sort("slot_id", ASCENDING)
         slots = await cursor.to_list(length=100)
@@ -154,35 +157,29 @@ class Database:
         return slots
 
     async def occupy_slot(self, slot_id: str, plate_number: str, token_id: str, vehicle_color: str = "unknown"):
-        """Mark a slot as occupied"""
         self.check_db()
         await self.db.parking_slots.update_one(
             {"slot_id": slot_id},
-            {
-                "$set": {
-                    "is_occupied": True,
-                    "plate_number": plate_number,
-                    "token_id": token_id,
-                    "vehicle_color": vehicle_color,
-                    "occupied_at": datetime.utcnow()
-                }
-            }
+            {"$set": {
+                "is_occupied": True,
+                "plate_number": plate_number,
+                "token_id": token_id,
+                "vehicle_color": vehicle_color,
+                "occupied_at": datetime.utcnow()
+            }}
         )
 
     async def release_slot(self, plate_number: str) -> Optional[str]:
-        """Release a parking slot by plate number and return the slot_id"""
         self.check_db()
         result = await self.db.parking_slots.find_one_and_update(
             {"plate_number": plate_number, "is_occupied": True},
-            {
-                "$set": {
-                    "is_occupied": False,
-                    "plate_number": None,
-                    "token_id": None,
-                    "vehicle_color": None,
-                    "occupied_at": None
-                }
-            },
+            {"$set": {
+                "is_occupied": False,
+                "plate_number": None,
+                "token_id": None,
+                "vehicle_color": None,
+                "occupied_at": None
+            }},
             return_document=True
         )
         return result["slot_id"] if result else None
@@ -191,13 +188,11 @@ class Database:
     # Camera Entry Log Operations
     # ──────────────────────────────
     async def log_camera_entry(self, log_data: Dict[str, Any]) -> str:
-        """Log camera entry attempt"""
         self.check_db()
         result = await self.db.camera_entry_logs.insert_one(log_data)
         return str(result.inserted_id)
 
     async def get_camera_entry_logs(self, limit: int = 100, skip: int = 0) -> List[Dict]:
-        """Get recent camera entry logs"""
         self.check_db()
         cursor = (
             self.db.camera_entry_logs.find()
@@ -206,14 +201,12 @@ class Database:
             .limit(limit)
         )
         logs = await cursor.to_list(length=limit)
-
         for log in logs:
             if "_id" in log:
                 log["_id"] = str(log["_id"])
         return logs
 
     async def get_camera_entry_by_plate(self, plate_number: str, limit: int = 20) -> List[Dict]:
-        """Get camera logs for a specific plate"""
         self.check_db()
         cursor = (
             self.db.camera_entry_logs.find({"plate_number": plate_number})
@@ -221,7 +214,6 @@ class Database:
             .limit(limit)
         )
         logs = await cursor.to_list(length=limit)
-
         for log in logs:
             if "_id" in log:
                 log["_id"] = str(log["_id"])
@@ -312,11 +304,9 @@ class Database:
             .limit(limit)
         )
         logs = await cursor.to_list(length=limit)
-
         for log in logs:
             if "_id" in log:
                 log["_id"] = str(log["_id"])
-
         return logs
 
     async def get_logs_by_plate(self, plate_number: str, limit: int = 50) -> List[Dict]:
@@ -327,11 +317,9 @@ class Database:
             .limit(limit)
         )
         logs = await cursor.to_list(length=limit)
-
         for log in logs:
             if "_id" in log:
                 log["_id"] = str(log["_id"])
-
         return logs
 
     async def get_logs_by_date_range(self, start: datetime, end: datetime) -> List[Dict]:
@@ -339,13 +327,10 @@ class Database:
         cursor = self.db.access_logs.find(
             {"timestamp": {"$gte": start, "$lte": end}}
         ).sort("timestamp", DESCENDING)
-        
         logs = await cursor.to_list(length=1000)
-
         for log in logs:
             if "_id" in log:
                 log["_id"] = str(log["_id"])
-
         return logs
 
     async def get_statistics(self) -> Dict[str, Any]:
