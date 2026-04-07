@@ -1,6 +1,6 @@
 """
 MongoDB Database Connection and Operations (Async Motor)
-Updated: Fixed unique indexes and added parking slot management, camera entry support, and seed data
+Updated: Fixed unique indexes, parking slot management, camera entry support, and seed data
 """
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING
@@ -65,14 +65,11 @@ class Database:
             raise Exception("❌ Database not connected.")
 
         # Users collection
-        await cls.db.users.create_index(
-            [("user_id", ASCENDING)], unique=True
-        )
-        # Partial unique index to ignore null emails
+        await cls.db.users.create_index([("user_id", ASCENDING)], unique=True)
         await cls.db.users.create_index(
             [("email", ASCENDING)],
             unique=True,
-            partialFilterExpression={"email": {"$exists": True, "$ne": None}}
+            partialFilterExpression={"email": {"$exists": True}}  # FIXED: Removed $ne
         )
 
         # Vehicles collection
@@ -82,9 +79,7 @@ class Database:
         # Tokens collection
         await cls.db.tokens.create_index([("token_id", ASCENDING)], unique=True)
         await cls.db.tokens.create_index([("plate_number", ASCENDING)])
-        await cls.db.tokens.create_index(
-            [("expiry_time", ASCENDING)], expireAfterSeconds=0
-        )
+        await cls.db.tokens.create_index([("expiry_time", ASCENDING)], expireAfterSeconds=0)
 
         # Access Logs collection
         await cls.db.access_logs.create_index([("timestamp", DESCENDING)])
@@ -194,12 +189,7 @@ class Database:
 
     async def get_camera_entry_logs(self, limit: int = 100, skip: int = 0) -> List[Dict]:
         self.check_db()
-        cursor = (
-            self.db.camera_entry_logs.find()
-            .sort("timestamp", DESCENDING)
-            .skip(skip)
-            .limit(limit)
-        )
+        cursor = self.db.camera_entry_logs.find().sort("timestamp", DESCENDING).skip(skip).limit(limit)
         logs = await cursor.to_list(length=limit)
         for log in logs:
             if "_id" in log:
@@ -208,11 +198,7 @@ class Database:
 
     async def get_camera_entry_by_plate(self, plate_number: str, limit: int = 20) -> List[Dict]:
         self.check_db()
-        cursor = (
-            self.db.camera_entry_logs.find({"plate_number": plate_number})
-            .sort("timestamp", DESCENDING)
-            .limit(limit)
-        )
+        cursor = self.db.camera_entry_logs.find({"plate_number": plate_number}).sort("timestamp", DESCENDING).limit(limit)
         logs = await cursor.to_list(length=limit)
         for log in logs:
             if "_id" in log:
@@ -224,6 +210,9 @@ class Database:
     # ──────────────────────────────
     async def create_user(self, user_data: Dict[str, Any]) -> str:
         self.check_db()
+        # Only include email if provided
+        if "email" in user_data and not user_data["email"]:
+            user_data.pop("email")
         result = await self.db.users.insert_one(user_data)
         return str(result.inserted_id)
 
@@ -297,12 +286,7 @@ class Database:
 
     async def get_access_logs(self, limit: int = 100, skip: int = 0) -> List[Dict]:
         self.check_db()
-        cursor = (
-            self.db.access_logs.find()
-            .sort("timestamp", DESCENDING)
-            .skip(skip)
-            .limit(limit)
-        )
+        cursor = self.db.access_logs.find().sort("timestamp", DESCENDING).skip(skip).limit(limit)
         logs = await cursor.to_list(length=limit)
         for log in logs:
             if "_id" in log:
@@ -311,11 +295,7 @@ class Database:
 
     async def get_logs_by_plate(self, plate_number: str, limit: int = 50) -> List[Dict]:
         self.check_db()
-        cursor = (
-            self.db.access_logs.find({"plate_number": plate_number})
-            .sort("timestamp", DESCENDING)
-            .limit(limit)
-        )
+        cursor = self.db.access_logs.find({"plate_number": plate_number}).sort("timestamp", DESCENDING).limit(limit)
         logs = await cursor.to_list(length=limit)
         for log in logs:
             if "_id" in log:
@@ -324,9 +304,7 @@ class Database:
 
     async def get_logs_by_date_range(self, start: datetime, end: datetime) -> List[Dict]:
         self.check_db()
-        cursor = self.db.access_logs.find(
-            {"timestamp": {"$gte": start, "$lte": end}}
-        ).sort("timestamp", DESCENDING)
+        cursor = self.db.access_logs.find({"timestamp": {"$gte": start, "$lte": end}}).sort("timestamp", DESCENDING)
         logs = await cursor.to_list(length=1000)
         for log in logs:
             if "_id" in log:
@@ -341,19 +319,11 @@ class Database:
         total_tokens      = await self.db.tokens.count_documents({})
         total_access_logs = await self.db.access_logs.count_documents({})
 
-        today_start = datetime.utcnow().replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
-        today_attempts = await self.db.access_logs.count_documents(
-            {"timestamp": {"$gte": today_start}}
-        )
-        today_granted = await self.db.access_logs.count_documents(
-            {"timestamp": {"$gte": today_start}, "access_decision": "GRANTED"}
-        )
-        today_denied = await self.db.access_logs.count_documents(
-            {"timestamp": {"$gte": today_start}, "access_decision": "DENIED"}
-        )
+        today_attempts = await self.db.access_logs.count_documents({"timestamp": {"$gte": today_start}})
+        today_granted  = await self.db.access_logs.count_documents({"timestamp": {"$gte": today_start}, "access_decision": "GRANTED"})
+        today_denied   = await self.db.access_logs.count_documents({"timestamp": {"$gte": today_start}, "access_decision": "DENIED"})
 
         return {
             "total_users": total_users,
