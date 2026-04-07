@@ -26,3 +26,5 @@ python-dotenv>=1.0.0
 # Computer Vision & Image Processing
 opencv-python-headless>=4.9.0.78
 Pillow>=10.1.0
+
+ultralytics
