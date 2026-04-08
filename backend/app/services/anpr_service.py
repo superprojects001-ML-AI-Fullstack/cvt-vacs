@@ -233,13 +233,19 @@ class ANPRService:
                 if confidences[best_idx] < settings.CONFIDENCE_THRESHOLD:
                     continue
 
-                x1, y1, x2, y2 = boxes.xyxy[best_idx].cpu().numpy().astype(int)
+                # ✅ FIXED: Convert numpy types to native Python types
+                x1, y1, x2, y2 = map(int, boxes.xyxy[best_idx].cpu().numpy())
                 confidence = float(confidences[best_idx])
                 plate_region = image[y1:y2, x1:x2]
 
                 return {
-                    "bbox":         {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
-                    "confidence":   confidence,
+                    "bbox": {
+                        "x1": int(x1),
+                        "y1": int(y1),
+                        "x2": int(x2),
+                        "y2": int(y2)
+                    },
+                    "confidence": float(confidence),
                     "plate_region": plate_region,
                 }
 
