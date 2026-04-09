@@ -1,7 +1,7 @@
 """
 ANPR Service: Automatic Number Plate Recognition
 Implements YOLOv8 + OCR pipeline as per thesis specifications
-Updated: Added vehicle color detection using OpenCV HSV color space
+Updated: Memory-optimized for Render 512MB limit
 """
 import cv2
 import numpy as np
@@ -11,10 +11,14 @@ import base64
 import io
 from PIL import Image
 import re
+import gc  # ✅ Added for memory cleanup
 
 from app.config import get_settings
 
 settings = get_settings()
+
+# Configure garbage collection for memory-constrained environment
+gc.set_threshold(700, 10, 10)
 
 # Lazy loading of ML models
 _yolo_model = None
@@ -27,7 +31,7 @@ def get_yolo_model():
     if _yolo_model is None:
         try:
             from ultralytics import YOLO
-            # Use YOLOv8n (nano) for faster inference
+            # Use YOLOv8n (nano) for faster inference - smallest model
             _yolo_model = YOLO('yolov8n.pt')
             print("✅ YOLOv8 model loaded")
         except Exception as e:
@@ -42,8 +46,8 @@ def get_ocr_reader():
     if _ocr_reader is None:
         try:
             import easyocr
-            # Initialize for English
-            _ocr_reader = easyocr.Reader(['en'], gpu=False)
+            # Initialize for English only - minimal memory
+            _ocr_reader = easyocr.Reader(['en'], gpu=False, verbose=False)
             print("✅ EasyOCR reader loaded")
         except Exception as e:
             print(f"⚠️ EasyOCR loading failed: {e}")
@@ -55,6 +59,7 @@ class ANPRService:
     """
     ANPR Service implementing Computer Vision pipeline
     Algorithm: Image → Preprocess → YOLO Detection → OCR → Color Detection → Plate Number
+    MEMORY OPTIMIZED for Render 512MB free tier
     """
 
     # Common license plate patterns
@@ -67,12 +72,10 @@ class ANPRService:
     ]
 
     # HSV color ranges for vehicle color detection
-    # Format: color_name -> list of (lower_hsv, upper_hsv) tuples
-    # Multiple ranges per color handle edge cases (e.g. red wraps around 180°)
     COLOR_RANGES = {
         "red":    [
             (np.array([0,   70,  50]),  np.array([10,  255, 255])),
-            (np.array([170, 70,  50]),  np.array([180, 255, 255])),  # red wraps hue
+            (np.array([170, 70,  50]),  np.array([180, 255, 255])),
         ],
         "blue":   [(np.array([100, 50,  50]),  np.array([130, 255, 255]))],
         "green":  [(np.array([40,  50,  50]),  np.array([80,  255, 255]))],
@@ -93,7 +96,18 @@ class ANPRService:
             if ',' in base64_string:
                 base64_string = base64_string.split(',')[1]
             img_data = base64.b64decode(base64_string)
+            
+            # ✅ MEMORY FIX: Use smaller max size
             img = Image.open(io.BytesIO(img_data))
+            
+            # Resize if too large before converting to numpy
+            max_dim = 800  # Max dimension to prevent memory overload
+            w, h = img.size
+            if max(w, h) > max_dim:
+                scale = max_dim / max(w, h)
+                new_size = (int(w * scale), int(h * scale))
+                img = img.resize(new_size, Image.Resampling.LANCZOS)
+            
             img_cv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
             return img_cv
         except Exception as e:
@@ -103,25 +117,26 @@ class ANPRService:
     @staticmethod
     def encode_image_to_base64(image: np.ndarray) -> str:
         """Encode OpenCV image to base64"""
-        _, buffer = cv2.imencode('.jpg', image)
+        # ✅ MEMORY FIX: Lower quality to reduce size
+        encode_params = [cv2.IMWRITE_JPEG_QUALITY, 85]
+        _, buffer = cv2.imencode('.jpg', image, encode_params)
         img_str = base64.b64encode(buffer).decode('utf-8')
         return f"data:image/jpeg;base64,{img_str}"
 
     @staticmethod
-    def preprocess_image(image: np.ndarray, target_size: Tuple[int, int] = (640, 640)) -> np.ndarray:
+    def preprocess_image(image: np.ndarray, target_size: Tuple[int, int] = (320, 320)) -> np.ndarray:
         """
-        Preprocess image for ANPR
-        - Resize to 640x640 (YOLOv8 input)
-        - Normalize pixel values
-        - Enhance contrast
+        Preprocess image for ANPR - REDUCED from 640x640 to 320x320 for memory
         """
         h, w = image.shape[:2]
         scale = min(target_size[0] / w, target_size[1] / h)
         new_w = int(w * scale)
         new_h = int(h * scale)
 
-        resized = cv2.resize(image, (new_w, new_h))
+        # ✅ MEMORY FIX: Use INTER_AREA for downsampling (better quality, less memory)
+        resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
+        # Use uint8 (default) - most memory efficient
         padded = np.full((target_size[1], target_size[0], 3), 128, dtype=np.uint8)
         y_offset = (target_size[1] - new_h) // 2
         x_offset = (target_size[0] - new_w) // 2
@@ -132,37 +147,27 @@ class ANPRService:
     @staticmethod
     def detect_vehicle_color(image: np.ndarray) -> Dict[str, Any]:
         """
-        Detect dominant vehicle color using HSV color space analysis.
-
-        Strategy:
-          1. Convert the full image to HSV.
-          2. Crop out the bottom 20% (road) and top 10% (sky) to focus on
-             the vehicle body.
-          3. For each colour, sum all matching pixels across its HSV ranges.
-          4. Pick the colour with the highest pixel count.
-          5. If the winner is too close to 'unknown' territory (very low
-             pixel count), return "unknown".
-
-        Args:
-            image: BGR OpenCV image (numpy ndarray)
-
-        Returns:
-            Dict with keys:
-                color        (str)   - detected colour name
-                color_confidence (float) - 0.0–1.0 ratio of matched pixels
-                color_hex    (str)   - representative hex code for the UI
+        Detect dominant vehicle color - MEMORY OPTIMIZED
         """
         if image is None or image.size == 0:
             return {"color": "unknown", "color_confidence": 0.0, "color_hex": "#808080"}
 
-        # ── 1. Crop to vehicle body region ──────────────────────────────────
+        # ✅ MEMORY FIX: Resize image immediately to reduce memory footprint
         h, w = image.shape[:2]
-        top_cut    = int(h * 0.10)   # remove sky
-        bottom_cut = int(h * 0.20)   # remove road
+        max_dim = 400  # Reduced from full size
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            new_w, new_h = int(w * scale), int(h * scale)
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            h, w = new_h, new_w
+
+        # ── 1. Crop to vehicle body region ──────────────────────────────────
+        top_cut = int(h * 0.10)
+        bottom_cut = int(h * 0.20)
         body = image[top_cut: h - bottom_cut, :]
 
         if body.size == 0:
-            body = image  # fallback to full image
+            body = image
 
         # ── 2. Convert to HSV ───────────────────────────────────────────────
         hsv = cv2.cvtColor(body, cv2.COLOR_BGR2HSV)
@@ -175,6 +180,7 @@ class ANPRService:
             for (lower, upper) in ranges:
                 mask = cv2.inRange(hsv, lower, upper)
                 count += int(cv2.countNonZero(mask))
+                del mask  # ✅ Free mask memory immediately
             color_scores[color_name] = count
 
         # ── 4. Pick the winner ──────────────────────────────────────────────
@@ -183,44 +189,40 @@ class ANPRService:
         confidence = round(best_count / total_pixels, 4) if total_pixels > 0 else 0.0
 
         # ── 5. Low-confidence fallback ──────────────────────────────────────
-        MIN_CONFIDENCE = 0.05          # less than 5 % of pixels matched → unknown
+        MIN_CONFIDENCE = 0.05
         if confidence < MIN_CONFIDENCE:
             best_color = "unknown"
 
-        # ── 6. Map colour to a representative hex for the UI ────────────────
+        # ── 6. Map colour to hex ────────────────────────────────────────────
         COLOR_HEX_MAP = {
-            "red":    "#FF0000",
-            "blue":   "#0000FF",
-            "green":  "#008000",
-            "yellow": "#FFFF00",
-            "orange": "#FF8C00",
-            "white":  "#FFFFFF",
-            "black":  "#1A1A1A",
-            "silver": "#C0C0C0",
-            "grey":   "#808080",
-            "brown":  "#8B4513",
-            "purple": "#800080",
-            "unknown":"#808080",
+            "red": "#FF0000", "blue": "#0000FF", "green": "#008000",
+            "yellow": "#FFFF00", "orange": "#FF8C00", "white": "#FFFFFF",
+            "black": "#1A1A1A", "silver": "#C0C0C0", "grey": "#808080",
+            "brown": "#8B4513", "purple": "#800080", "unknown": "#808080",
         }
 
+        # ✅ Clean up large arrays
+        del hsv, body, image
+        gc.collect()
+
         return {
-            "color":            best_color,
+            "color": best_color,
             "color_confidence": confidence,
-            "color_hex":        COLOR_HEX_MAP.get(best_color, "#808080"),
+            "color_hex": COLOR_HEX_MAP.get(best_color, "#808080"),
         }
 
     @staticmethod
     def detect_plate_region(image: np.ndarray) -> Optional[Dict[str, Any]]:
         """
         Detect license plate region using YOLOv8
-        Returns bounding box coordinates and confidence
         """
         model = get_yolo_model()
         if model is None:
             return None
 
         try:
-            results = model(image, verbose=False)
+            # ✅ MEMORY FIX: Run with lower confidence, no verbose
+            results = model(image, verbose=False, conf=0.3)
 
             for result in results:
                 boxes = result.boxes
@@ -236,6 +238,15 @@ class ANPRService:
                 # ✅ FIXED: Convert numpy types to native Python types
                 x1, y1, x2, y2 = map(int, boxes.xyxy[best_idx].cpu().numpy())
                 confidence = float(confidences[best_idx])
+                
+                # Ensure valid coordinates
+                h, w = image.shape[:2]
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(w, x2), min(h, y2)
+                
+                if x2 <= x1 or y2 <= y1:
+                    continue
+                    
                 plate_region = image[y1:y2, x1:x2]
 
                 return {
@@ -258,32 +269,47 @@ class ANPRService:
     @staticmethod
     def recognize_plate_text(plate_region: np.ndarray) -> Optional[Dict[str, Any]]:
         """
-        Recognize text from license plate region using EasyOCR
+        Recognize text from license plate region - MEMORY OPTIMIZED
         """
         reader = get_ocr_reader()
         if reader is None:
             return None
 
         try:
-            gray     = cv2.cvtColor(plate_region, cv2.COLOR_BGR2GRAY)
-            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            denoised = cv2.fastNlMeansDenoising(thresh, None, 10, 7, 21)
+            # ✅ MEMORY FIX: Resize plate region if too large
+            h, w = plate_region.shape[:2]
+            max_plate_width = 280  # Reduced from 300
+            if w > max_plate_width:
+                scale = max_plate_width / w
+                new_w, new_h = int(w * scale), int(h * scale)
+                plate_region = cv2.resize(plate_region, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-            results = reader.readtext(denoised)
+            # Simplified preprocessing - skip heavy denoising
+            gray = cv2.cvtColor(plate_region, cv2.COLOR_BGR2GRAY)
+            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+            # ✅ MEMORY FIX: Skip fastNlMeansDenoising - too memory intensive on Render
+            # Run OCR directly on thresholded image
+            results = reader.readtext(thresh)
+
             if not results:
                 return None
 
-            texts       = []
+            texts = []
             confidences = []
             for (_, text, conf) in results:
                 texts.append(text)
                 confidences.append(conf)
 
-            full_text = ' '.join(texts)
-            full_text = re.sub(r'[^A-Z0-9\s\-]', '', full_text.upper())
-            full_text = full_text.replace(' ', '-')
+            # Clean text - remove spaces, keep only valid chars
+            full_text = ''.join(texts)
+            full_text = re.sub(r'[^A-Z0-9]', '', full_text.upper())
 
             avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+
+            # ✅ Clean up
+            del gray, thresh, plate_region
+            gc.collect()
 
             return {"text": full_text, "confidence": avg_confidence}
 
@@ -295,7 +321,6 @@ class ANPRService:
     def validate_plate_format(plate_text: str) -> Tuple[bool, str]:
         """
         Validate and clean license plate format
-        Returns (is_valid, cleaned_plate)
         """
         cleaned = re.sub(r'[^A-Z0-9]', '', plate_text.upper())
 
@@ -314,25 +339,7 @@ class ANPRService:
     @staticmethod
     async def process_image(image_input: str) -> Dict[str, Any]:
         """
-        Main ANPR processing pipeline
-        Algorithm: Image → Preprocess → YOLO → OCR → Color Detection → Validate → Result
-
-        Args:
-            image_input: Base64 encoded image (with or without data URI prefix)
-                         or absolute file path starting with '/'.
-
-        Returns:
-            Dict containing:
-                success          (bool)
-                plate_number     (str | None)
-                confidence       (float | None)  - OCR confidence
-                color            (str)           - detected vehicle colour
-                color_confidence (float)
-                color_hex        (str)           - hex code for UI badge
-                vehicle_type     (str | None)    - reserved for future classifier
-                bounding_box     (dict | None)
-                processing_time_ms (float)
-                message          (str)
+        Main ANPR processing pipeline - MEMORY OPTIMIZED
         """
         start_time = datetime.utcnow()
 
@@ -346,23 +353,27 @@ class ANPRService:
 
         if image is None:
             return {
-                "success":           False,
-                "plate_number":      None,
-                "confidence":        None,
-                "color":             "unknown",
-                "color_confidence":  0.0,
-                "color_hex":         "#808080",
-                "vehicle_type":      None,
-                "bounding_box":      None,
+                "success": False,
+                "plate_number": None,
+                "confidence": None,
+                "color": "unknown",
+                "color_confidence": 0.0,
+                "color_hex": "#808080",
+                "vehicle_type": None,
+                "bounding_box": None,
                 "processing_time_ms": 0,
-                "message":           "Failed to decode image",
+                "message": "Failed to decode image",
             }
 
-        # ── Detect vehicle colour (run on original, unscaled image) ─────────
+        # ── Detect vehicle colour ───────────────────────────────────────────
         color_result = ANPRService.detect_vehicle_color(image)
 
         # ── Preprocess for YOLO ─────────────────────────────────────────────
         processed_image = ANPRService.preprocess_image(image)
+        
+        # ✅ Free original image memory
+        del image
+        gc.collect()
 
         # ── Detect plate region ─────────────────────────────────────────────
         detection = ANPRService.detect_plate_region(processed_image)
@@ -370,16 +381,16 @@ class ANPRService:
         if detection is None:
             processing_time = (datetime.utcnow() - start_time).total_seconds() * 1000
             return {
-                "success":            False,
-                "plate_number":       None,
-                "confidence":         None,
-                "color":              color_result["color"],
-                "color_confidence":   color_result["color_confidence"],
-                "color_hex":          color_result["color_hex"],
-                "vehicle_type":       None,
-                "bounding_box":       None,
+                "success": False,
+                "plate_number": None,
+                "confidence": None,
+                "color": color_result["color"],
+                "color_confidence": color_result["color_confidence"],
+                "color_hex": color_result["color_hex"],
+                "vehicle_type": None,
+                "bounding_box": None,
                 "processing_time_ms": processing_time,
-                "message":            "No license plate detected",
+                "message": "No license plate detected",
             }
 
         # ── OCR ─────────────────────────────────────────────────────────────
@@ -388,16 +399,16 @@ class ANPRService:
         if ocr_result is None:
             processing_time = (datetime.utcnow() - start_time).total_seconds() * 1000
             return {
-                "success":            False,
-                "plate_number":       None,
-                "confidence":         detection["confidence"],
-                "color":              color_result["color"],
-                "color_confidence":   color_result["color_confidence"],
-                "color_hex":          color_result["color_hex"],
-                "vehicle_type":       None,
-                "bounding_box":       detection["bbox"],
+                "success": False,
+                "plate_number": None,
+                "confidence": detection["confidence"],
+                "color": color_result["color"],
+                "color_confidence": color_result["color_confidence"],
+                "color_hex": color_result["color_hex"],
+                "vehicle_type": None,
+                "bounding_box": detection["bbox"],
                 "processing_time_ms": processing_time,
-                "message":            "Failed to recognize plate text",
+                "message": "Failed to recognize plate text",
             }
 
         # ── Validate plate format ────────────────────────────────────────────
@@ -407,43 +418,54 @@ class ANPRService:
         # ── Low-confidence OCR check ─────────────────────────────────────────
         if ocr_result["confidence"] < settings.PLATE_CONFIDENCE_THRESHOLD:
             return {
-                "success":            False,
-                "plate_number":       cleaned_plate,
-                "confidence":         ocr_result["confidence"],
-                "color":              color_result["color"],
-                "color_confidence":   color_result["color_confidence"],
-                "color_hex":          color_result["color_hex"],
-                "vehicle_type":       None,
-                "bounding_box":       detection["bbox"],
+                "success": False,
+                "plate_number": cleaned_plate,
+                "confidence": ocr_result["confidence"],
+                "color": color_result["color"],
+                "color_confidence": color_result["color_confidence"],
+                "color_hex": color_result["color_hex"],
+                "vehicle_type": None,
+                "bounding_box": detection["bbox"],
                 "processing_time_ms": processing_time,
-                "message":            f"Low OCR confidence: {ocr_result['confidence']:.2f}",
+                "message": f"Low OCR confidence: {ocr_result['confidence']:.2f}",
             }
 
         # ── Success ──────────────────────────────────────────────────────────
-        return {
-            "success":            True,
-            "plate_number":       cleaned_plate,
-            "confidence":         ocr_result["confidence"],
-            "color":              color_result["color"],
-            "color_confidence":   color_result["color_confidence"],
-            "color_hex":          color_result["color_hex"],
-            "vehicle_type":       None,   # reserved – extend with a classifier later
-            "bounding_box":       detection["bbox"],
+        result = {
+            "success": True,
+            "plate_number": cleaned_plate,
+            "confidence": ocr_result["confidence"],
+            "color": color_result["color"],
+            "color_confidence": color_result["color_confidence"],
+            "color_hex": color_result["color_hex"],
+            "vehicle_type": None,
+            "bounding_box": detection["bbox"],
             "processing_time_ms": processing_time,
-            "message":            "Plate recognized successfully",
+            "message": "Plate recognized successfully",
         }
+        
+        # ✅ Final memory cleanup
+        del processed_image, detection, ocr_result
+        gc.collect()
+        
+        return result
 
     @staticmethod
     async def process_frame(frame: np.ndarray) -> Dict[str, Any]:
         """
-        Process a single video frame for real-time ANPR.
-        Used by the camera-entry live feed.
-
-        Args:
-            frame: BGR OpenCV image (numpy ndarray)
-
-        Returns:
-            Same dict structure as process_image()
+        Process a single video frame - MEMORY OPTIMIZED
         """
+        # Resize frame immediately to save memory
+        h, w = frame.shape[:2]
+        max_dim = 640
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            frame = cv2.resize(frame, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
+        
         encoded = ANPRService.encode_image_to_base64(frame)
+        
+        # ✅ Clean up frame before processing
+        del frame
+        gc.collect()
+        
         return await ANPRService.process_image(encoded)
